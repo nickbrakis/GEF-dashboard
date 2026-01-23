@@ -333,6 +333,49 @@ body::before {
     color: var(--color-text-primary);
 }
 
+/* ===== Select Field ===== */
+.select-field {
+    width: 100%;
+    padding: var(--spacing-sm) var(--spacing-md);
+    background: var(--color-bg-tertiary);
+    border: 2px solid rgba(255, 255, 255, 0.1);
+    border-radius: var(--radius-md);
+    color: var(--color-text-primary);
+    font-size: 1rem;
+    font-family: inherit;
+    transition: all var(--transition-base);
+    margin-top: var(--spacing-sm);
+}
+
+.select-field:focus {
+    outline: none;
+    border-color: var(--color-accent-primary);
+    box-shadow: 0 0 0 4px rgba(160, 100, 255, 0.1);
+}
+
+.select-field option {
+    padding: var(--spacing-xs);
+    background: var(--color-bg-tertiary);
+    color: var(--color-text-primary);
+}
+
+.select-field option:checked {
+    background: var(--color-accent-primary);
+    color: white;
+}
+
+.select-field option:disabled {
+    color: var(--color-text-muted);
+    font-style: italic;
+}
+
+.helper-text {
+    font-size: 0.875rem;
+    color: var(--color-text-muted);
+    margin-top: var(--spacing-xs);
+    font-style: italic;
+}
+
 /* ===== Buttons ===== */
 .btn {
     display: inline-flex;
@@ -397,6 +440,39 @@ body::before {
 
 .btn:hover .btn-icon {
     transform: translateX(4px);
+}
+
+.btn-secondary {
+    background: var(--color-bg-tertiary);
+    color: var(--color-text-primary);
+    border: 2px solid rgba(255, 255, 255, 0.2);
+    padding: var(--spacing-xs) var(--spacing-md);
+    font-size: 0.875rem;
+    font-weight: 500;
+    border-radius: var(--radius-sm);
+    cursor: pointer;
+    transition: all var(--transition-base);
+    font-family: inherit;
+    margin-bottom: var(--spacing-xs);
+    display: inline-block;
+}
+
+.btn-secondary:hover {
+    background: rgba(255, 255, 255, 0.05);
+    border-color: var(--color-accent-primary);
+    transform: translateY(-1px);
+}
+
+.btn-download {
+    background: var(--color-success);
+    color: white;
+    box-shadow: 0 4px 16px rgba(76, 175, 80, 0.3);
+    margin-left: var(--spacing-sm);
+}
+
+.btn-download:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 6px 24px rgba(76, 175, 80, 0.4);
 }
 
 /* ===== Loading State ===== */

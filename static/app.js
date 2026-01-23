@@ -30,7 +30,8 @@ const parentFilterInput = document.getElementById('parentFilter');
 
 // DOM Elements - Compare Mode
 const compareButton = document.getElementById('compareButton');
-const experimentNamesInput = document.getElementById('experimentNames');
+const experimentSelect = document.getElementById('experimentSelect');
+const loadExperimentsBtn = document.getElementById('loadExperimentsBtn');
 const compareParentFilterInput = document.getElementById('compareParentFilter');
 
 // DOM Elements - Mode Toggle
@@ -55,6 +56,7 @@ fetchButton.addEventListener('click', fetchMetrics);
 
 // Event Listeners - Compare Mode
 compareButton.addEventListener('click', compareExperiments);
+loadExperimentsBtn.addEventListener('click', loadAvailableExperiments);
 
 // Event Listeners - Mode Toggle
 singleModeBtn.addEventListener('click', () => switchMode('single'));
@@ -354,23 +356,46 @@ function displayRunsTable(metrics) {
     runsTable.appendChild(table);
 }
 
+// Load available experiments
+async function loadAvailableExperiments() {
+    try {
+        loadExperimentsBtn.disabled = true;
+        loadExperimentsBtn.textContent = 'Loading...';
+
+        const response = await fetch(`${API_BASE_URL}/experiments`);
+        const data = await response.json();
+
+        if (!data.success) {
+            throw new Error(data.error || 'Failed to load experiments');
+        }
+
+        // Populate dropdown
+        experimentSelect.innerHTML = '';
+        data.experiments.forEach(exp => {
+            const option = document.createElement('option');
+            option.value = exp.name;
+            option.textContent = exp.name;
+            experimentSelect.appendChild(option);
+        });
+
+        loadExperimentsBtn.textContent = 'Reload Experiments';
+        loadExperimentsBtn.disabled = false;
+
+    } catch (error) {
+        showError(error.message);
+        loadExperimentsBtn.textContent = 'Load Available Experiments';
+        loadExperimentsBtn.disabled = false;
+    }
+}
+
 // Compare experiments function
 async function compareExperiments() {
-    const experimentNamesText = experimentNamesInput.value.trim();
-
-    if (!experimentNamesText) {
-        showError('Please enter at least 2 experiment names');
-        return;
-    }
-
-    // Parse experiment names (one per line)
-    const experimentNames = experimentNamesText
-        .split('\n')
-        .map(name => name.trim())
-        .filter(name => name.length > 0);
+    // Get selected experiments from dropdown
+    const selectedOptions = Array.from(experimentSelect.selectedOptions);
+    const experimentNames = selectedOptions.map(opt => opt.value);
 
     if (experimentNames.length < 2) {
-        showError('Please enter at least 2 experiment names (one per line)');
+        showError('Please select at least 2 experiments from the dropdown');
         return;
     }
 
@@ -478,13 +503,31 @@ function displayComparisonChart(experiments, metricName) {
     const chartTitle = document.createElement('h3');
     chartTitle.className = 'chart-title';
     chartTitle.textContent = `${metricName.toUpperCase()} Comparison`;
+    chartTitle.style.marginBottom = '0';
+
+    // Add download button
+    const downloadBtn = document.createElement('button');
+    downloadBtn.className = 'btn btn-download';
+    downloadBtn.innerHTML = '<span class="btn-text">Download PNG</span>';
+
+    // Create title container with button
+    const titleContainer = document.createElement('div');
+    titleContainer.style.display = 'flex';
+    titleContainer.style.justifyContent = 'space-between';
+    titleContainer.style.alignItems = 'center';
+    titleContainer.style.marginBottom = 'var(--spacing-md)';
+    titleContainer.appendChild(chartTitle);
+    titleContainer.appendChild(downloadBtn);
 
     const canvas = document.createElement('canvas');
     canvas.id = 'comparison-chart';
 
-    chartContainer.appendChild(chartTitle);
+    chartContainer.appendChild(titleContainer);
     chartContainer.appendChild(canvas);
     chartsGrid.appendChild(chartContainer);
+
+    // Set download button onclick after canvas is created
+    downloadBtn.onclick = () => downloadChartAsPNG(canvas, `${metricName}_comparison`);
 
     // Create chart
     const ctx = canvas.getContext('2d');
@@ -511,6 +554,8 @@ function displayComparisonChart(experiments, metricName) {
                 legend: {
                     display: false
                 },
+                // Add white background for PNG export
+                backgroundColor: 'transparent',
                 tooltip: {
                     backgroundColor: 'rgba(0, 0, 0, 0.8)',
                     padding: 12,
@@ -567,6 +612,36 @@ function displayComparisonChart(experiments, metricName) {
             }
         }
     });
+}
+
+// Download chart as PNG
+function downloadChartAsPNG(canvas, filename) {
+    // Create a link element
+    const link = document.createElement('a');
+    link.download = `${filename}_${new Date().toISOString().split('T')[0]}.png`;
+
+    // Convert canvas to data URL with white background for academic papers
+    const ctx = canvas.getContext('2d');
+    const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+
+    // Create a temporary canvas with white background
+    const tempCanvas = document.createElement('canvas');
+    tempCanvas.width = canvas.width;
+    tempCanvas.height = canvas.height;
+    const tempCtx = tempCanvas.getContext('2d');
+
+    // Fill with white background
+    tempCtx.fillStyle = '#FFFFFF';
+    tempCtx.fillRect(0, 0, tempCanvas.width, tempCanvas.height);
+
+    // Draw the original canvas on top
+    tempCtx.drawImage(canvas, 0, 0);
+
+    // Set the link href to the canvas data URL
+    link.href = tempCanvas.toDataURL('image/png');
+
+    // Trigger download
+    link.click();
 }
 
 // Initialize

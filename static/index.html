@@ -77,10 +77,14 @@
                     <h2 class="card-title">Compare Experiments</h2>
 
                     <div class="form-group">
-                        <label for="experimentNames">Experiment Names (one per line)</label>
-                        <textarea id="experimentNames"
-                            placeholder="Enter experiment names, one per line...&#10;e.g.,&#10;experiment_1&#10;experiment_2&#10;experiment_3"
-                            class="textarea-field" rows="5"></textarea>
+                        <label for="experimentSelect">Select Experiments to Compare</label>
+                        <button id="loadExperimentsBtn" class="btn-secondary">
+                            <span>Load Available Experiments</span>
+                        </button>
+                        <select id="experimentSelect" multiple class="select-field" size="8">
+                            <option disabled>Click "Load Available Experiments" first...</option>
+                        </select>
+                        <p class="helper-text">Hold Ctrl (Cmd on Mac) to select multiple experiments</p>
                     </div>
 
                     <div class="form-group">
