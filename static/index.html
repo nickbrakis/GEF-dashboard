@@ -1,0 +1,110 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>MLflow Metrics Visualization</title>
+    <link rel="stylesheet" href="/static/style.css">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+</head>
+
+<body>
+    <div class="container">
+        <!-- Header -->
+        <header class="header">
+            <div class="header-content">
+                <h1 class="title">
+                    <span class="gradient-text">MLflow</span> Metrics Dashboard
+                </h1>
+                <p class="subtitle">Visualize and analyze your experiment metrics</p>
+            </div>
+        </header>
+
+        <!-- Control Panel -->
+        <section class="control-panel">
+            <div class="card glass">
+                <h2 class="card-title">Experiment Configuration</h2>
+
+                <div class="form-group">
+                    <label for="experimentName">Experiment Name</label>
+                    <input type="text" id="experimentName" placeholder="Enter experiment name..." class="input-field">
+                </div>
+
+                <div class="form-group">
+                    <label>Metrics to Display</label>
+                    <div class="checkbox-group">
+                        <label class="checkbox-label">
+                            <input type="checkbox" id="metricMase" value="mase" checked>
+                            <span class="checkbox-text">MASE</span>
+                        </label>
+                        <label class="checkbox-label">
+                            <input type="checkbox" id="metricRmse" value="rmse" checked>
+                            <span class="checkbox-text">RMSE</span>
+                        </label>
+                        <label class="checkbox-label">
+                            <input type="checkbox" id="metricMape" value="mape" checked>
+                            <span class="checkbox-text">MAPE</span>
+                        </label>
+                    </div>
+                </div>
+
+                <div class="form-group">
+                    <label for="parentFilter">Parent Run Filter (Optional)</label>
+                    <input type="text" id="parentFilter" placeholder="e.g., tags.mlflow.runName LIKE 'model_%'"
+                        class="input-field">
+                </div>
+
+                <button id="fetchButton" class="btn btn-primary">
+                    <span class="btn-text">Fetch Metrics</span>
+                    <span class="btn-icon">→</span>
+                </button>
+            </div>
+        </section>
+
+        <!-- Loading State -->
+        <div id="loadingState" class="loading-state hidden">
+            <div class="spinner"></div>
+            <p>Loading metrics...</p>
+        </div>
+
+        <!-- Error State -->
+        <div id="errorState" class="error-state hidden">
+            <div class="error-icon">⚠️</div>
+            <p id="errorMessage"></p>
+        </div>
+
+        <!-- Statistics Dashboard -->
+        <section id="statsSection" class="stats-section hidden">
+            <h2 class="section-title">Statistics Overview</h2>
+            <div id="statsGrid" class="stats-grid">
+                <!-- Stats cards will be dynamically inserted here -->
+            </div>
+        </section>
+
+        <!-- Charts Section -->
+        <section id="chartsSection" class="charts-section hidden">
+            <h2 class="section-title">Metric Visualizations</h2>
+            <div id="chartsGrid" class="charts-grid">
+                <!-- Charts will be dynamically inserted here -->
+            </div>
+        </section>
+
+        <!-- Runs Table -->
+        <section id="runsSection" class="runs-section hidden">
+            <h2 class="section-title">Run Details</h2>
+            <div class="card glass">
+                <div id="runsTable" class="runs-table">
+                    <!-- Table will be dynamically inserted here -->
+                </div>
+            </div>
+        </section>
+    </div>
+
+    <script src="/static/app.js"></script>
+</body>
+
+</html>
