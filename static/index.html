@@ -27,41 +27,91 @@
         <!-- Control Panel -->
         <section class="control-panel">
             <div class="card glass">
-                <h2 class="card-title">Experiment Configuration</h2>
-
-                <div class="form-group">
-                    <label for="experimentName">Experiment Name</label>
-                    <input type="text" id="experimentName" placeholder="Enter experiment name..." class="input-field">
+                <div class="mode-toggle">
+                    <button id="singleModeBtn" class="mode-btn active">Single Experiment</button>
+                    <button id="compareModeBtn" class="mode-btn">Compare Experiments</button>
                 </div>
 
-                <div class="form-group">
-                    <label>Metrics to Display</label>
-                    <div class="checkbox-group">
-                        <label class="checkbox-label">
-                            <input type="checkbox" id="metricMase" value="mase" checked>
-                            <span class="checkbox-text">MASE</span>
-                        </label>
-                        <label class="checkbox-label">
-                            <input type="checkbox" id="metricRmse" value="rmse" checked>
-                            <span class="checkbox-text">RMSE</span>
-                        </label>
-                        <label class="checkbox-label">
-                            <input type="checkbox" id="metricMape" value="mape" checked>
-                            <span class="checkbox-text">MAPE</span>
-                        </label>
+                <!-- Single Experiment Mode -->
+                <div id="singleMode" class="mode-content">
+                    <h2 class="card-title">Experiment Configuration</h2>
+
+                    <div class="form-group">
+                        <label for="experimentName">Experiment Name</label>
+                        <input type="text" id="experimentName" placeholder="Enter experiment name..."
+                            class="input-field">
                     </div>
+
+                    <div class="form-group">
+                        <label>Metrics to Display</label>
+                        <div class="checkbox-group">
+                            <label class="checkbox-label">
+                                <input type="checkbox" id="metricMase" value="mase" checked>
+                                <span class="checkbox-text">MASE</span>
+                            </label>
+                            <label class="checkbox-label">
+                                <input type="checkbox" id="metricRmse" value="rmse" checked>
+                                <span class="checkbox-text">RMSE</span>
+                            </label>
+                            <label class="checkbox-label">
+                                <input type="checkbox" id="metricMape" value="mape" checked>
+                                <span class="checkbox-text">MAPE</span>
+                            </label>
+                        </div>
+                    </div>
+
+                    <div class="form-group">
+                        <label for="parentFilter">Parent Run Filter (Optional)</label>
+                        <input type="text" id="parentFilter" placeholder="e.g., tags.mlflow.runName LIKE 'model_%'"
+                            class="input-field">
+                    </div>
+
+                    <button id="fetchButton" class="btn btn-primary">
+                        <span class="btn-text">Fetch Metrics</span>
+                        <span class="btn-icon">→</span>
+                    </button>
                 </div>
 
-                <div class="form-group">
-                    <label for="parentFilter">Parent Run Filter (Optional)</label>
-                    <input type="text" id="parentFilter" placeholder="e.g., tags.mlflow.runName LIKE 'model_%'"
-                        class="input-field">
-                </div>
+                <!-- Compare Mode -->
+                <div id="compareMode" class="mode-content hidden">
+                    <h2 class="card-title">Compare Experiments</h2>
 
-                <button id="fetchButton" class="btn btn-primary">
-                    <span class="btn-text">Fetch Metrics</span>
-                    <span class="btn-icon">→</span>
-                </button>
+                    <div class="form-group">
+                        <label for="experimentNames">Experiment Names (one per line)</label>
+                        <textarea id="experimentNames"
+                            placeholder="Enter experiment names, one per line...&#10;e.g.,&#10;experiment_1&#10;experiment_2&#10;experiment_3"
+                            class="textarea-field" rows="5"></textarea>
+                    </div>
+
+                    <div class="form-group">
+                        <label>Metric to Compare</label>
+                        <div class="radio-group">
+                            <label class="radio-label">
+                                <input type="radio" name="compareMetric" value="mase" checked>
+                                <span class="radio-text">MASE</span>
+                            </label>
+                            <label class="radio-label">
+                                <input type="radio" name="compareMetric" value="rmse">
+                                <span class="radio-text">RMSE</span>
+                            </label>
+                            <label class="radio-label">
+                                <input type="radio" name="compareMetric" value="mape">
+                                <span class="radio-text">MAPE</span>
+                            </label>
+                        </div>
+                    </div>
+
+                    <div class="form-group">
+                        <label for="compareParentFilter">Parent Run Filter (Optional)</label>
+                        <input type="text" id="compareParentFilter"
+                            placeholder="e.g., tags.mlflow.runName LIKE 'model_%'" class="input-field">
+                    </div>
+
+                    <button id="compareButton" class="btn btn-primary">
+                        <span class="btn-text">Compare Experiments</span>
+                        <span class="btn-icon">→</span>
+                    </button>
+                </div>
             </div>
         </section>
 

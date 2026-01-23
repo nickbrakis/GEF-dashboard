@@ -4,38 +4,38 @@
     --color-bg-primary: hsl(230, 25%, 8%);
     --color-bg-secondary: hsl(230, 20%, 12%);
     --color-bg-tertiary: hsl(230, 18%, 16%);
-    
+
     --color-accent-primary: hsl(260, 85%, 65%);
     --color-accent-secondary: hsl(200, 90%, 55%);
     --color-accent-gradient: linear-gradient(135deg, hsl(260, 85%, 65%), hsl(200, 90%, 55%));
-    
+
     --color-text-primary: hsl(0, 0%, 95%);
     --color-text-secondary: hsl(0, 0%, 70%);
     --color-text-muted: hsl(0, 0%, 50%);
-    
+
     --color-success: hsl(142, 70%, 55%);
     --color-warning: hsl(45, 95%, 60%);
     --color-error: hsl(0, 75%, 60%);
-    
+
     /* Spacing */
     --spacing-xs: 0.5rem;
     --spacing-sm: 1rem;
     --spacing-md: 1.5rem;
     --spacing-lg: 2rem;
     --spacing-xl: 3rem;
-    
+
     /* Border Radius */
     --radius-sm: 8px;
     --radius-md: 12px;
     --radius-lg: 16px;
     --radius-xl: 24px;
-    
+
     /* Shadows */
     --shadow-sm: 0 2px 8px rgba(0, 0, 0, 0.3);
     --shadow-md: 0 4px 16px rgba(0, 0, 0, 0.4);
     --shadow-lg: 0 8px 32px rgba(0, 0, 0, 0.5);
     --shadow-glow: 0 0 40px rgba(160, 100, 255, 0.3);
-    
+
     /* Transitions */
     --transition-fast: 150ms ease;
     --transition-base: 250ms ease;
@@ -66,15 +66,22 @@ body::before {
     width: 200%;
     height: 200%;
     background: radial-gradient(circle at 30% 50%, hsla(260, 85%, 65%, 0.15) 0%, transparent 50%),
-                radial-gradient(circle at 70% 80%, hsla(200, 90%, 55%, 0.1) 0%, transparent 50%);
+        radial-gradient(circle at 70% 80%, hsla(200, 90%, 55%, 0.1) 0%, transparent 50%);
     animation: gradientShift 20s ease infinite;
     pointer-events: none;
     z-index: -1;
 }
 
 @keyframes gradientShift {
-    0%, 100% { transform: translate(0, 0) rotate(0deg); }
-    50% { transform: translate(-5%, -5%) rotate(5deg); }
+
+    0%,
+    100% {
+        transform: translate(0, 0) rotate(0deg);
+    }
+
+    50% {
+        transform: translate(-5%, -5%) rotate(5deg);
+    }
 }
 
 /* ===== Container ===== */
@@ -112,8 +119,15 @@ body::before {
 }
 
 @keyframes gradientFlow {
-    0%, 100% { background-position: 0% 50%; }
-    50% { background-position: 100% 50%; }
+
+    0%,
+    100% {
+        background-position: 0% 50%;
+    }
+
+    50% {
+        background-position: 100% 50%;
+    }
 }
 
 .subtitle {
@@ -221,6 +235,104 @@ body::before {
     color: var(--color-text-primary);
 }
 
+/* ===== Mode Toggle ===== */
+.mode-toggle {
+    display: flex;
+    gap: var(--spacing-sm);
+    margin-bottom: var(--spacing-lg);
+    padding: 4px;
+    background: var(--color-bg-tertiary);
+    border-radius: var(--radius-md);
+}
+
+.mode-btn {
+    flex: 1;
+    padding: var(--spacing-sm) var(--spacing-md);
+    background: transparent;
+    border: none;
+    border-radius: var(--radius-sm);
+    color: var(--color-text-secondary);
+    font-size: 0.95rem;
+    font-weight: 500;
+    cursor: pointer;
+    transition: all var(--transition-base);
+    font-family: inherit;
+}
+
+.mode-btn:hover {
+    color: var(--color-text-primary);
+}
+
+.mode-btn.active {
+    background: var(--color-accent-gradient);
+    color: white;
+    box-shadow: 0 2px 8px rgba(160, 100, 255, 0.3);
+}
+
+.mode-content {
+    animation: fadeIn 0.3s ease;
+}
+
+/* ===== Textarea ===== */
+.textarea-field {
+    width: 100%;
+    padding: var(--spacing-sm) var(--spacing-md);
+    background: var(--color-bg-tertiary);
+    border: 2px solid rgba(255, 255, 255, 0.1);
+    border-radius: var(--radius-md);
+    color: var(--color-text-primary);
+    font-size: 1rem;
+    font-family: inherit;
+    transition: all var(--transition-base);
+    resize: vertical;
+    min-height: 100px;
+}
+
+.textarea-field:focus {
+    outline: none;
+    border-color: var(--color-accent-primary);
+    box-shadow: 0 0 0 4px rgba(160, 100, 255, 0.1);
+}
+
+.textarea-field::placeholder {
+    color: var(--color-text-muted);
+}
+
+/* ===== Radio Buttons ===== */
+.radio-group {
+    display: flex;
+    gap: var(--spacing-md);
+    flex-wrap: wrap;
+}
+
+.radio-label {
+    display: flex;
+    align-items: center;
+    gap: var(--spacing-xs);
+    cursor: pointer;
+    padding: var(--spacing-xs) var(--spacing-md);
+    background: var(--color-bg-tertiary);
+    border-radius: var(--radius-md);
+    transition: all var(--transition-base);
+}
+
+.radio-label:hover {
+    background: rgba(255, 255, 255, 0.05);
+}
+
+.radio-label input[type="radio"] {
+    width: 20px;
+    height: 20px;
+    cursor: pointer;
+    accent-color: var(--color-accent-primary);
+}
+
+.radio-text {
+    font-size: 0.95rem;
+    font-weight: 500;
+    color: var(--color-text-primary);
+}
+
 /* ===== Buttons ===== */
 .btn {
     display: inline-flex;
@@ -272,7 +384,8 @@ body::before {
     transform: translateY(0);
 }
 
-.btn-text, .btn-icon {
+.btn-text,
+.btn-icon {
     position: relative;
     z-index: 1;
 }
@@ -304,7 +417,9 @@ body::before {
 }
 
 @keyframes spin {
-    to { transform: rotate(360deg); }
+    to {
+        transform: rotate(360deg);
+    }
 }
 
 /* ===== Error State ===== */
@@ -468,6 +583,7 @@ body::before {
     from {
         opacity: 0;
     }
+
     to {
         opacity: 1;
     }
@@ -478,6 +594,7 @@ body::before {
         opacity: 0;
         transform: translateY(20px);
     }
+
     to {
         opacity: 1;
         transform: translateY(0);
@@ -489,6 +606,7 @@ body::before {
         opacity: 0;
         transform: translateY(-20px);
     }
+
     to {
         opacity: 1;
         transform: translateY(0);
@@ -500,19 +618,19 @@ body::before {
     .title {
         font-size: 2.5rem;
     }
-    
+
     .subtitle {
         font-size: 1rem;
     }
-    
+
     .charts-grid {
         grid-template-columns: 1fr;
     }
-    
+
     .checkbox-group {
         flex-direction: column;
     }
-    
+
     .container {
         padding: var(--spacing-md);
     }
@@ -522,7 +640,7 @@ body::before {
     .title {
         font-size: 2rem;
     }
-    
+
     .stats-grid {
         grid-template-columns: 1fr;
     }

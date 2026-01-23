@@ -23,10 +23,23 @@ const METRIC_COLORS = {
     }
 };
 
-// DOM Elements
+// DOM Elements - Single Mode
 const fetchButton = document.getElementById('fetchButton');
 const experimentNameInput = document.getElementById('experimentName');
 const parentFilterInput = document.getElementById('parentFilter');
+
+// DOM Elements - Compare Mode
+const compareButton = document.getElementById('compareButton');
+const experimentNamesInput = document.getElementById('experimentNames');
+const compareParentFilterInput = document.getElementById('compareParentFilter');
+
+// DOM Elements - Mode Toggle
+const singleModeBtn = document.getElementById('singleModeBtn');
+const compareModeBtn = document.getElementById('compareModeBtn');
+const singleMode = document.getElementById('singleMode');
+const compareMode = document.getElementById('compareMode');
+
+// DOM Elements - Shared
 const loadingState = document.getElementById('loadingState');
 const errorState = document.getElementById('errorState');
 const errorMessage = document.getElementById('errorMessage');
@@ -37,15 +50,39 @@ const statsGrid = document.getElementById('statsGrid');
 const chartsGrid = document.getElementById('chartsGrid');
 const runsTable = document.getElementById('runsTable');
 
-// Event Listeners
+// Event Listeners - Single Mode
 fetchButton.addEventListener('click', fetchMetrics);
+
+// Event Listeners - Compare Mode
+compareButton.addEventListener('click', compareExperiments);
+
+// Event Listeners - Mode Toggle
+singleModeBtn.addEventListener('click', () => switchMode('single'));
+compareModeBtn.addEventListener('click', () => switchMode('compare'));
 
 // Allow Enter key to trigger fetch
 experimentNameInput.addEventListener('keypress', (e) => {
     if (e.key === 'Enter') fetchMetrics();
 });
 
-// Main function to fetch metrics
+// Mode switching function
+function switchMode(mode) {
+    if (mode === 'single') {
+        singleModeBtn.classList.add('active');
+        compareModeBtn.classList.remove('active');
+        singleMode.classList.remove('hidden');
+        compareMode.classList.add('hidden');
+    } else {
+        compareModeBtn.classList.add('active');
+        singleModeBtn.classList.remove('active');
+        compareMode.classList.remove('hidden');
+        singleMode.classList.add('hidden');
+    }
+    // Hide results when switching modes
+    hideAllSections();
+}
+
+// Main function to fetch metrics (single experiment mode)
 async function fetchMetrics() {
     const experimentName = experimentNameInput.value.trim();
 
@@ -315,6 +352,221 @@ function displayRunsTable(metrics) {
 
     runsTable.innerHTML = '';
     runsTable.appendChild(table);
+}
+
+// Compare experiments function
+async function compareExperiments() {
+    const experimentNamesText = experimentNamesInput.value.trim();
+
+    if (!experimentNamesText) {
+        showError('Please enter at least 2 experiment names');
+        return;
+    }
+
+    // Parse experiment names (one per line)
+    const experimentNames = experimentNamesText
+        .split('\n')
+        .map(name => name.trim())
+        .filter(name => name.length > 0);
+
+    if (experimentNames.length < 2) {
+        showError('Please enter at least 2 experiment names (one per line)');
+        return;
+    }
+
+    // Get selected metric
+    const selectedMetric = document.querySelector('input[name="compareMetric"]:checked').value;
+    const parentFilter = compareParentFilterInput.value.trim() || null;
+
+    // Show loading state
+    showLoading();
+
+    try {
+        const response = await fetch(`${API_BASE_URL}/compare`, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({
+                experiment_names: experimentNames,
+                metric: selectedMetric,
+                parent_filter: parentFilter
+            })
+        });
+
+        const data = await response.json();
+
+        if (!data.success) {
+            throw new Error(data.error || 'Failed to compare experiments');
+        }
+
+        // Display comparison results
+        displayComparisonResults(data);
+
+    } catch (error) {
+        showError(error.message);
+    }
+}
+
+// Display comparison results
+function displayComparisonResults(data) {
+    hideAllSections();
+
+    const experiments = data.experiments;
+    const metricName = data.metric_name;
+
+    // Check if we have any valid data
+    const hasData = experiments.some(exp => exp.average !== null);
+
+    if (!hasData) {
+        showError('No valid metric data found for these experiments');
+        return;
+    }
+
+    // Display comparison statistics
+    displayComparisonStatistics(experiments, metricName);
+
+    // Display comparison chart
+    displayComparisonChart(experiments, metricName);
+
+    // Show sections
+    statsSection.classList.remove('hidden');
+    chartsSection.classList.remove('hidden');
+}
+
+// Display comparison statistics
+function displayComparisonStatistics(experiments, metricName) {
+    statsGrid.innerHTML = '';
+
+    experiments.forEach(exp => {
+        if (exp.error || exp.average === null) return;
+
+        const statCard = document.createElement('div');
+        statCard.className = 'stat-card';
+        statCard.innerHTML = `
+            <div class="stat-label">${exp.experiment_name}</div>
+            <div class="stat-value">${exp.average.toFixed(4)}</div>
+            <div class="stat-metric">${metricName.toUpperCase()} Average</div>
+            <div style="margin-top: 1rem; font-size: 0.875rem; color: var(--color-text-secondary);">
+                <div>Min: ${exp.min.toFixed(4)}</div>
+                <div>Max: ${exp.max.toFixed(4)}</div>
+                <div>Runs: ${exp.valid_runs}</div>
+            </div>
+        `;
+        statsGrid.appendChild(statCard);
+    });
+}
+
+// Display comparison chart
+function displayComparisonChart(experiments, metricName) {
+    chartsGrid.innerHTML = '';
+
+    // Destroy existing charts
+    Object.values(charts).forEach(chart => chart.destroy());
+    Object.keys(charts).forEach(key => delete charts[key]);
+
+    // Filter out experiments with no data
+    const validExperiments = experiments.filter(exp => exp.average !== null);
+
+    if (validExperiments.length === 0) return;
+
+    // Create chart container
+    const chartContainer = document.createElement('div');
+    chartContainer.className = 'chart-container';
+    chartContainer.style.gridColumn = '1 / -1'; // Full width
+
+    const chartTitle = document.createElement('h3');
+    chartTitle.className = 'chart-title';
+    chartTitle.textContent = `${metricName.toUpperCase()} Comparison`;
+
+    const canvas = document.createElement('canvas');
+    canvas.id = 'comparison-chart';
+
+    chartContainer.appendChild(chartTitle);
+    chartContainer.appendChild(canvas);
+    chartsGrid.appendChild(chartContainer);
+
+    // Create chart
+    const ctx = canvas.getContext('2d');
+    const colors = METRIC_COLORS[metricName] || METRIC_COLORS.mase;
+
+    charts['comparison'] = new Chart(ctx, {
+        type: 'bar',
+        data: {
+            labels: validExperiments.map(exp => exp.experiment_name),
+            datasets: [{
+                label: `${metricName.toUpperCase()} Average`,
+                data: validExperiments.map(exp => exp.average),
+                backgroundColor: colors.primary,
+                borderColor: colors.border,
+                borderWidth: 2,
+                borderRadius: 8,
+                hoverBackgroundColor: colors.border
+            }]
+        },
+        options: {
+            responsive: true,
+            maintainAspectRatio: true,
+            plugins: {
+                legend: {
+                    display: false
+                },
+                tooltip: {
+                    backgroundColor: 'rgba(0, 0, 0, 0.8)',
+                    padding: 12,
+                    titleColor: '#fff',
+                    bodyColor: '#fff',
+                    borderColor: colors.border,
+                    borderWidth: 1,
+                    displayColors: false,
+                    callbacks: {
+                        label: function (context) {
+                            const exp = validExperiments[context.dataIndex];
+                            return [
+                                `Average: ${exp.average.toFixed(4)}`,
+                                `Min: ${exp.min.toFixed(4)}`,
+                                `Max: ${exp.max.toFixed(4)}`,
+                                `Runs: ${exp.valid_runs}`
+                            ];
+                        }
+                    }
+                }
+            },
+            scales: {
+                y: {
+                    beginAtZero: true,
+                    grid: {
+                        color: 'rgba(255, 255, 255, 0.05)',
+                        drawBorder: false
+                    },
+                    ticks: {
+                        color: 'rgba(255, 255, 255, 0.7)',
+                        font: {
+                            size: 11
+                        }
+                    }
+                },
+                x: {
+                    grid: {
+                        display: false,
+                        drawBorder: false
+                    },
+                    ticks: {
+                        color: 'rgba(255, 255, 255, 0.7)',
+                        font: {
+                            size: 11
+                        },
+                        maxRotation: 45,
+                        minRotation: 45
+                    }
+                }
+            },
+            animation: {
+                duration: 800,
+                easing: 'easeInOutQuart'
+            }
+        }
+    });
 }
 
 // Initialize

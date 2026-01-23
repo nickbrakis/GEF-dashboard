@@ -123,6 +123,81 @@ def get_metrics():
             'error': str(e)
         }), 500
 
+@app.route('/api/compare', methods=['POST'])
+def compare_experiments():
+    """Compare metrics across multiple experiments."""
+    try:
+        data = request.get_json()
+        experiment_names = data.get('experiment_names', [])
+        metric_name = data.get('metric', 'mase')  # Single metric for comparison
+        tracking_uri = data.get('tracking_uri', DEFAULT_TRACKING_URI)
+        parent_filter = data.get('parent_filter')
+        
+        if not experiment_names or len(experiment_names) < 2:
+            return jsonify({
+                'success': False,
+                'error': 'At least 2 experiment names are required for comparison'
+            }), 400
+        
+        # Fetch metrics for each experiment
+        comparison_results = []
+        for exp_name in experiment_names:
+            try:
+                metric_results = get_eval_metrics(
+                    tracking_uri=tracking_uri,
+                    experiment_name=exp_name,
+                    metric_name=metric_name,
+                    parent_filter=parent_filter,
+                    verbose=False
+                )
+                
+                # Process the results and filter out NaN values
+                metric_values = [r["metric_value"] for r in metric_results]
+                valid_values = [v for v in metric_values if not math.isnan(v)]
+                
+                if valid_values:
+                    avg_value = sum(valid_values) / len(valid_values)
+                    min_value = min(valid_values)
+                    max_value = max(valid_values)
+                else:
+                    avg_value = None
+                    min_value = None
+                    max_value = None
+                
+                comparison_results.append({
+                    'experiment_name': exp_name,
+                    'metric_name': metric_name,
+                    'average': avg_value,
+                    'min': min_value,
+                    'max': max_value,
+                    'total_runs': len(metric_results),
+                    'valid_runs': len(valid_values),
+                    'nan_count': len(metric_values) - len(valid_values)
+                })
+                
+            except Exception as e:
+                comparison_results.append({
+                    'experiment_name': exp_name,
+                    'error': str(e),
+                    'average': None,
+                    'min': None,
+                    'max': None,
+                    'total_runs': 0,
+                    'valid_runs': 0
+                })
+        
+        return jsonify({
+            'success': True,
+            'metric_name': metric_name,
+            'experiments': comparison_results
+        })
+        
+    except Exception as e:
+        return jsonify({
+            'success': False,
+            'error': str(e)
+        }), 500
+
 @app.route('/api/health', methods=['GET'])
 def health_check():
     """Health check endpoint."""
