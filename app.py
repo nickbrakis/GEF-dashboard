@@ -4,7 +4,7 @@ import mlflow
 from mlflow.tracking import MlflowClient
 import math
 from typing import List, Dict, Optional
-from mlflow_metrics import get_eval_metrics
+from mlflow_metrics import get_eval_metrics, get_timeseries_count
 
 app = Flask(__name__, static_folder='static')
 CORS(app)
@@ -74,29 +74,46 @@ def get_metrics():
                     verbose=False
                 )
                 
-                # Process the results and filter out NaN values
-                metric_values = [r["metric_value"] for r in metric_results]
-                valid_values = [v for v in metric_values if not math.isnan(v)]
+                # Fetch timeseries counts and compute weighted average
+                valid_runs = []
+                metric_values = [] # For min/max/unweighted
+                weighted_sum = 0
+                total_ts_count = 0
                 
-                # Filter runs to only include those with valid (non-NaN) metric values
-                valid_runs = [
-                    r for r in metric_results 
-                    if not math.isnan(r["metric_value"])
-                ]
-                
+                for r in metric_results:
+                    val = r["metric_value"]
+                    if math.isnan(val):
+                        continue # Skip NaNs
+                        
+                    # Fetch count
+                    ts_count = get_timeseries_count(tracking_uri, r["eval_run_id"])
+                    
+                    if ts_count > 0:
+                        r["ts_count"] = ts_count
+                        valid_runs.append(r)
+                        metric_values.append(val)
+                        
+                        weighted_sum += val * ts_count
+                        total_ts_count += ts_count
+                    
                 stats = {
                     'total_runs': len(metric_results),
-                    'valid_runs': len(valid_values),
-                    'nan_count': len(metric_values) - len(valid_values),
-                    'values': valid_values,
-                    'runs': valid_runs  # Only include runs with valid values
+                    'valid_runs': len(valid_runs),
+                    'nan_count': len(metric_results) - len(valid_runs), # Approximation
+                    'values': metric_values,
+                    'runs': valid_runs,
+                    'total_timeseries': total_ts_count
                 }
                 
-                if valid_values:
-                    stats['average'] = sum(valid_values) / len(valid_values)
-                    stats['min'] = min(valid_values)
-                    stats['max'] = max(valid_values)
+                if valid_runs and total_ts_count > 0:
+                    stats['weighted_average'] = weighted_sum / total_ts_count
+                    stats['unweighted_average'] = sum(metric_values) / len(metric_values)
+                    stats['average'] = stats['weighted_average'] # Default to weighted for UI compatibility
+                    stats['min'] = min(metric_values)
+                    stats['max'] = max(metric_values)
                 else:
+                    stats['weighted_average'] = None
+                    stats['unweighted_average'] = None
                     stats['average'] = None
                     stats['min'] = None
                     stats['max'] = None
@@ -151,28 +168,47 @@ def compare_experiments():
                     verbose=False
                 )
                 
-                # Process the results and filter out NaN values
-                metric_values = [r["metric_value"] for r in metric_results]
-                valid_values = [v for v in metric_values if not math.isnan(v)]
+                # Compute weighted average
+                valid_runs = []
+                metric_values = []
+                weighted_sum = 0
+                total_ts_count = 0
                 
-                if valid_values:
-                    avg_value = sum(valid_values) / len(valid_values)
-                    min_value = min(valid_values)
-                    max_value = max(valid_values)
+                for r in metric_results:
+                    val = r["metric_value"]
+                    if math.isnan(val):
+                        continue
+                        
+                    ts_count = get_timeseries_count(tracking_uri, r["eval_run_id"])
+                    
+                    if ts_count > 0:
+                        metric_values.append(val)
+                        weighted_sum += val * ts_count
+                        total_ts_count += ts_count
+                        valid_runs.append(r)
+                
+                if valid_runs and total_ts_count > 0:
+                    weighted_avg = weighted_sum / total_ts_count
+                    unweighted_avg = sum(metric_values) / len(metric_values)
+                    min_value = min(metric_values)
+                    max_value = max(metric_values)
                 else:
-                    avg_value = None
+                    weighted_avg = None
+                    unweighted_avg = None
                     min_value = None
                     max_value = None
                 
                 comparison_results.append({
                     'experiment_name': exp_name,
                     'metric_name': metric_name,
-                    'average': avg_value,
+                    'average': weighted_avg, # Use weighted as main average
+                    'weighted_average': weighted_avg,
+                    'unweighted_average': unweighted_avg,
                     'min': min_value,
                     'max': max_value,
                     'total_runs': len(metric_results),
-                    'valid_runs': len(valid_values),
-                    'nan_count': len(metric_values) - len(valid_values)
+                    'valid_runs': len(valid_runs),
+                    'total_timeseries': total_ts_count
                 })
                 
             except Exception as e:

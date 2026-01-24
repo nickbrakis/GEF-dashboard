@@ -1,9 +1,14 @@
+import os
+import shutil
+import tempfile
+import pandas as pd
+from typing import List, Dict, Optional, Union
 import mlflow
 from mlflow.tracking import MlflowClient
 import argparse
 import csv
 import math
-from typing import List, Dict, Optional
+import requests
 
 def get_eval_metrics(
     tracking_uri: str,
@@ -82,22 +87,40 @@ def get_eval_metrics(
                         print(f"  Parent: {parent_run_name}")
                         print(f"    Eval: {child_run_name}")
                         print(f"    {metric_name}: {metrics[metric_name]}")
-    
     return results
 
-def save_to_csv(results: List[Dict], filename: str):
-    """Save results to a CSV file."""
-    if not results:
-        print("No results to save.")
-        return
-    
-    with open(filename, 'w', newline='') as csvfile:
-        fieldnames = results[0].keys()
-        writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
-        writer.writeheader()
-        writer.writerows(results)
-    
-    print(f"Results saved to {filename}")
+def get_timeseries_count(tracking_uri: str, run_id: str) -> int:
+    """
+    Get the number of timeseries in a run by counting directories in 'eval_results'
+    using the MLflow REST API.
+    """
+    try:
+        # Construct API URL
+        # We need to handle potential trailing slashes in tracking_uri
+        base_uri = tracking_uri.rstrip('/')
+        url = f"{base_uri}/api/2.0/mlflow/artifacts/list"
+        
+        params = {
+            "run_id": run_id,
+            "path": "eval_results"
+        }
+        
+        response = requests.get(url, params=params, timeout=10)
+        
+        if response.status_code == 200:
+            data = response.json()
+            files = data.get("files", [])
+            # Count only directories
+            # MLflow API returns 'is_dir' boolean
+            directories = [f for f in files if f.get("is_dir")]
+            return len(directories)
+        else:
+            # If path doesn't exist or other error, return 0 or handle accordingly
+            return 0
+            
+    except Exception as e:
+        print(f"  ⚠️  Error counting timeseries for run {run_id}: {e}")
+        return 0
 
 def main():
     parser = argparse.ArgumentParser(
@@ -131,6 +154,7 @@ def main():
         action="store_true",
         help="Print detailed information about each run"
     )
+    # Removing --use-artifacts as we now do this by default/weighted average method
     
     args = parser.parse_args()
     
@@ -144,36 +168,65 @@ def main():
         )
         
         if results:
-            metric_values = [r["metric_value"] for r in results]
+            # Calculate Weighted Average
+            print("\nCalculating weighted average (fetching timeseries counts)...")
             
-            # Filter out NaN values
-            valid_values = [v for v in metric_values if not math.isnan(v)]
-            nan_count = len(metric_values) - len(valid_values)
+            valid_results = []
+            total_ts_count = 0
+            weighted_sum = 0
+            
+            metric_values = [] # For min/max calculation
+            
+            for r in results:
+                val = r["metric_value"]
+                if math.isnan(val):
+                    continue
+                
+                # Fetch count
+                ts_count = get_timeseries_count(args.tracking_uri, r["eval_run_id"])
+                
+                if ts_count > 0:
+                    r["ts_count"] = ts_count
+                    valid_results.append(r)
+                    
+                    metric_values.append(val)
+                    weighted_sum += val * ts_count
+                    total_ts_count += ts_count
+                    
+                    if args.verbose:
+                        print(f"  Run: {r['eval_run_name']} | Metric: {val:.6f} | Count: {ts_count}")
+                else:
+                    if args.verbose:
+                        print(f"  Run: {r['eval_run_name']} | Metric: {val:.6f} | Count: 0 (Ignored)")
             
             print(f"\n{'='*60}")
             print(f"Experiment: {args.experiment}")
             print(f"Metric: {args.metric}")
-            print(f"Number of eval runs: {len(results)}")
+            print(f"Number of valid eval runs: {len(valid_results)}")
             
-            if nan_count > 0:
-                print(f"⚠️  NaN values found: {nan_count}")
-                print(f"Valid values: {len(valid_values)}")
+            if len(results) > len(valid_results):
+                print(f"⚠️  Runs excluded (NaN or 0 count): {len(results) - len(valid_results)}")
             
-            if valid_values:
-                average = sum(valid_values) / len(valid_values)
-                min_val = min(valid_values)
-                max_val = max(valid_values)
+            if valid_results and total_ts_count > 0:
+                weighted_average = weighted_sum / total_ts_count
                 
-                print(f"Average: {average:.6f}")
+                # Standard (unweighted) average for comparison
+                unweighted_average = sum(metric_values) / len(metric_values)
+                min_val = min(metric_values)
+                max_val = max(metric_values)
+                
+                print(f"\nWeighted Average: {weighted_average:.6f}")
+                print(f"(Unweighted Average: {unweighted_average:.6f})")
                 print(f"Min: {min_val:.6f}")
                 print(f"Max: {max_val:.6f}")
+                print(f"Total Timeseries: {total_ts_count}")
             else:
-                print("⚠️  No valid metric values found (all values are NaN)")
+                print("⚠️  No valid data for calculation.")
             
             print(f"{'='*60}\n")
             
             if args.csv:
-                save_to_csv(results, args.csv)
+                save_to_csv(valid_results, args.csv)
         else:
             print(f"No eval subruns found with metric '{args.metric}'.")
     
