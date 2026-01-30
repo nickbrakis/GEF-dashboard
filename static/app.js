@@ -20,6 +20,11 @@ const METRIC_COLORS = {
         primary: 'rgba(255, 150, 100, 0.8)',
         secondary: 'rgba(255, 150, 100, 0.2)',
         border: 'rgba(255, 150, 100, 1)'
+    },
+    mae: {
+        primary: 'rgba(100, 255, 150, 0.8)',
+        secondary: 'rgba(100, 255, 150, 0.2)',
+        border: 'rgba(100, 255, 150, 1)'
     }
 };
 
@@ -27,6 +32,8 @@ const METRIC_COLORS = {
 const fetchButton = document.getElementById('fetchButton');
 const experimentNameInput = document.getElementById('experimentName');
 const parentFilterInput = document.getElementById('parentFilter');
+const loadSingleExperimentsBtn = document.getElementById('loadSingleExperimentsBtn');
+const singleExperimentSelect = document.getElementById('singleExperimentSelect');
 
 // DOM Elements - Compare Mode
 const compareButton = document.getElementById('compareButton');
@@ -53,6 +60,7 @@ const runsTable = document.getElementById('runsTable');
 
 // Event Listeners - Single Mode
 fetchButton.addEventListener('click', fetchMetrics);
+loadSingleExperimentsBtn.addEventListener('click', loadSingleExperiments);
 
 // Event Listeners - Compare Mode
 compareButton.addEventListener('click', compareExperiments);
@@ -65,6 +73,14 @@ compareModeBtn.addEventListener('click', () => switchMode('compare'));
 // Allow Enter key to trigger fetch
 experimentNameInput.addEventListener('keypress', (e) => {
     if (e.key === 'Enter') fetchMetrics();
+});
+
+// Sync dropdown selection with text input
+singleExperimentSelect.addEventListener('change', () => {
+    const selectedOption = singleExperimentSelect.selectedOptions[0];
+    if (selectedOption && !selectedOption.disabled) {
+        experimentNameInput.value = selectedOption.value;
+    }
 });
 
 // Mode switching function
@@ -86,10 +102,18 @@ function switchMode(mode) {
 
 // Main function to fetch metrics (single experiment mode)
 async function fetchMetrics() {
-    const experimentName = experimentNameInput.value.trim();
+    // Get experiment name from dropdown if selected, otherwise from text input
+    let experimentName = '';
+    const selectedOption = singleExperimentSelect.selectedOptions[0];
+
+    if (selectedOption && !selectedOption.disabled) {
+        experimentName = selectedOption.value;
+    } else {
+        experimentName = experimentNameInput.value.trim();
+    }
 
     if (!experimentName) {
-        showError('Please enter an experiment name');
+        showError('Please select an experiment from the dropdown or enter an experiment name');
         return;
     }
 
@@ -98,6 +122,7 @@ async function fetchMetrics() {
     if (document.getElementById('metricMase').checked) selectedMetrics.push('mase');
     if (document.getElementById('metricRmse').checked) selectedMetrics.push('rmse');
     if (document.getElementById('metricMape').checked) selectedMetrics.push('mape');
+    if (document.getElementById('metricMae').checked) selectedMetrics.push('mae');
 
     if (selectedMetrics.length === 0) {
         showError('Please select at least one metric');
@@ -385,6 +410,38 @@ async function loadAvailableExperiments() {
         showError(error.message);
         loadExperimentsBtn.textContent = 'Load Available Experiments';
         loadExperimentsBtn.disabled = false;
+    }
+}
+
+// Load available experiments for single mode
+async function loadSingleExperiments() {
+    try {
+        loadSingleExperimentsBtn.disabled = true;
+        loadSingleExperimentsBtn.textContent = 'Loading...';
+
+        const response = await fetch(`${API_BASE_URL}/experiments`);
+        const data = await response.json();
+
+        if (!data.success) {
+            throw new Error(data.error || 'Failed to load experiments');
+        }
+
+        // Populate dropdown
+        singleExperimentSelect.innerHTML = '';
+        data.experiments.forEach(exp => {
+            const option = document.createElement('option');
+            option.value = exp.name;
+            option.textContent = exp.name;
+            singleExperimentSelect.appendChild(option);
+        });
+
+        loadSingleExperimentsBtn.textContent = 'Reload Experiments';
+        loadSingleExperimentsBtn.disabled = false;
+
+    } catch (error) {
+        showError(error.message);
+        loadSingleExperimentsBtn.textContent = 'Load Available Experiments';
+        loadSingleExperimentsBtn.disabled = false;
     }
 }
 

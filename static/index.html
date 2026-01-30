@@ -38,6 +38,13 @@
 
                     <div class="form-group">
                         <label for="experimentName">Experiment Name</label>
+                        <button id="loadSingleExperimentsBtn" class="btn-secondary">
+                            <span>Load Available Experiments</span>
+                        </button>
+                        <select id="singleExperimentSelect" class="select-field" size="6">
+                            <option disabled selected>Click "Load Available Experiments" first...</option>
+                        </select>
+                        <p class="helper-text">Or enter manually below:</p>
                         <input type="text" id="experimentName" placeholder="Enter experiment name..."
                             class="input-field">
                     </div>
@@ -56,6 +63,10 @@
                             <label class="checkbox-label">
                                 <input type="checkbox" id="metricMape" value="mape" checked>
                                 <span class="checkbox-text">MAPE</span>
+                            </label>
+                            <label class="checkbox-label">
+                                <input type="checkbox" id="metricMae" value="mae" checked>
+                                <span class="checkbox-text">MAE</span>
                             </label>
                         </div>
                     </div>
@@ -101,6 +112,10 @@
                             <label class="radio-label">
                                 <input type="radio" name="compareMetric" value="mape">
                                 <span class="radio-text">MAPE</span>
+                            </label>
+                            <label class="radio-label">
+                                <input type="radio" name="compareMetric" value="mae">
+                                <span class="radio-text">MAE</span>
                             </label>
                         </div>
                     </div>
