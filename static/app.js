@@ -34,6 +34,7 @@ const experimentNameInput = document.getElementById('experimentName');
 const parentFilterInput = document.getElementById('parentFilter');
 const loadSingleExperimentsBtn = document.getElementById('loadSingleExperimentsBtn');
 const singleExperimentSelect = document.getElementById('singleExperimentSelect');
+const downloadCsvButton = document.getElementById('downloadCsvButton');
 
 // DOM Elements - Compare Mode
 const compareButton = document.getElementById('compareButton');
@@ -57,10 +58,14 @@ const runsSection = document.getElementById('runsSection');
 const statsGrid = document.getElementById('statsGrid');
 const chartsGrid = document.getElementById('chartsGrid');
 const runsTable = document.getElementById('runsTable');
+const csvPreviewSection = document.getElementById('csvPreviewSection');
+const csvPreviewTable = document.getElementById('csvPreviewTable');
+const closePreviewBtn = document.getElementById('closePreviewBtn');
 
 // Event Listeners - Single Mode
 fetchButton.addEventListener('click', fetchMetrics);
 loadSingleExperimentsBtn.addEventListener('click', loadSingleExperiments);
+downloadCsvButton.addEventListener('click', downloadConcatenatedCSV);
 
 // Event Listeners - Compare Mode
 compareButton.addEventListener('click', compareExperiments);
@@ -69,6 +74,7 @@ loadExperimentsBtn.addEventListener('click', loadAvailableExperiments);
 // Event Listeners - Mode Toggle
 singleModeBtn.addEventListener('click', () => switchMode('single'));
 compareModeBtn.addEventListener('click', () => switchMode('compare'));
+closePreviewBtn.addEventListener('click', () => csvPreviewSection.classList.add('hidden'));
 
 // Allow Enter key to trigger fetch
 experimentNameInput.addEventListener('keypress', (e) => {
@@ -181,6 +187,8 @@ function hideAllSections() {
     statsSection.classList.add('hidden');
     chartsSection.classList.add('hidden');
     runsSection.classList.add('hidden');
+    downloadCsvButton.classList.add('hidden');
+    csvPreviewSection.classList.add('hidden');
 }
 
 // Display results
@@ -210,6 +218,7 @@ function displayResults(data) {
     statsSection.classList.remove('hidden');
     chartsSection.classList.remove('hidden');
     runsSection.classList.remove('hidden');
+    downloadCsvButton.classList.remove('hidden');
 }
 
 // Display statistics cards
@@ -699,6 +708,116 @@ function downloadChartAsPNG(canvas, filename) {
 
     // Trigger download
     link.click();
+}
+
+// Download concatenated CSV
+async function downloadConcatenatedCSV() {
+    // Get experiment name from dropdown if selected, otherwise from text input
+    let experimentName = '';
+    const selectedOption = singleExperimentSelect.selectedOptions[0];
+
+    if (selectedOption && !selectedOption.disabled) {
+        experimentName = selectedOption.value;
+    } else {
+        experimentName = experimentNameInput.value.trim();
+    }
+
+    if (!experimentName) {
+        showError('Please select an experiment first');
+        return;
+    }
+
+    const parentFilter = parentFilterInput.value.trim() || null;
+
+    // Disable button and show loading state
+    const originalText = downloadCsvButton.querySelector('.btn-text').textContent;
+    downloadCsvButton.disabled = true;
+    downloadCsvButton.querySelector('.btn-text').textContent = 'Generating CSV...';
+
+    try {
+        const response = await fetch(`${API_BASE_URL}/export-csv`, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({
+                experiment_name: experimentName,
+                parent_filter: parentFilter
+            })
+        });
+
+        if (!response.ok) {
+            const errorData = await response.json();
+            throw new Error(errorData.error || 'Failed to generate CSV');
+        }
+
+        // Get the CSV content
+        const blob = await response.blob();
+
+        // Create download link
+        const url = window.URL.createObjectURL(blob);
+        const link = document.createElement('a');
+        link.href = url;
+        link.download = `${experimentName}_concatenated_${new Date().toISOString().split('T')[0]}.csv`;
+
+        // Trigger download
+        document.body.appendChild(link);
+        link.click();
+
+        // Display preview
+        const reader = new FileReader();
+        reader.onload = function (e) {
+            const text = e.target.result;
+            displayCSVPreview(text);
+        };
+        reader.readAsText(blob);
+
+        // Cleanup
+        document.body.removeChild(link);
+        window.URL.revokeObjectURL(url);
+
+        // Reset button
+        downloadCsvButton.disabled = false;
+        downloadCsvButton.querySelector('.btn-text').textContent = originalText;
+
+    } catch (error) {
+        showError(error.message);
+        downloadCsvButton.disabled = false;
+        downloadCsvButton.querySelector('.btn-text').textContent = originalText;
+    }
+}
+
+// Display CSV Preview
+function displayCSVPreview(csvText) {
+    const lines = csvText.trim().split('\n');
+    if (lines.length === 0) return;
+
+    const headers = lines[0].split(',');
+    const rows = lines.slice(1);
+
+    const table = document.createElement('table');
+    table.innerHTML = `
+        <thead>
+            <tr>
+                ${headers.map(h => `<th>${h.replace(/"/g, '')}</th>`).join('')}
+            </tr>
+        </thead>
+        <tbody>
+            ${rows.map(row => {
+        const columns = row.split(',');
+        return `
+                    <tr>
+                        ${columns.map(c => `<td>${c.replace(/"/g, '')}</td>`).join('')}
+                    </tr>
+                `;
+    }).join('')}
+        </tbody>
+    `;
+
+    csvPreviewTable.innerHTML = '';
+    csvPreviewTable.appendChild(table);
+    csvPreviewSection.classList.remove('hidden');
+    csvPreviewSection.scrollIntoView({ behavior: 'smooth' });
 }
 
 // Initialize

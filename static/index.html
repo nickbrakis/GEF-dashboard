@@ -81,6 +81,11 @@
                         <span class="btn-text">Fetch Metrics</span>
                         <span class="btn-icon">→</span>
                     </button>
+
+                    <button id="downloadCsvButton" class="btn btn-secondary hidden" style="margin-top: 1rem;">
+                        <span class="btn-text">Download Concatenated CSV</span>
+                        <span class="btn-icon">↓</span>
+                    </button>
                 </div>
 
                 <!-- Compare Mode -->
@@ -168,6 +173,19 @@
             <div class="card glass">
                 <div id="runsTable" class="runs-table">
                     <!-- Table will be dynamically inserted here -->
+                </div>
+            </div>
+        </section>
+
+        <!-- CSV Preview -->
+        <section id="csvPreviewSection" class="hidden" style="margin-top: 2rem;">
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1rem;">
+                <h2 class="section-title" style="margin-bottom: 0;">CSV Data Preview</h2>
+                <button id="closePreviewBtn" class="btn btn-secondary">Close Preview</button>
+            </div>
+            <div class="card glass">
+                <div id="csvPreviewTable" class="runs-table" style="max-height: 400px; overflow-y: auto;">
+                    <!-- Preview table will be dynamically inserted here -->
                 </div>
             </div>
         </section>
