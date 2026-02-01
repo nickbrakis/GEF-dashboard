@@ -219,6 +219,11 @@ function showLoading() {
     loadingState.classList.remove('hidden');
 }
 
+// Hide loading state
+function hideLoading() {
+    loadingState.classList.add('hidden');
+}
+
 // Show error state
 function showError(message) {
     hideAllSections();
@@ -921,11 +926,20 @@ console.log('Ready to fetch metrics from MLflow experiments');
 
 
 async function fetchLeaderboard() {
-    showLoading();
-    // hideError(); // Helper might not exist or might be inside showLoading, let's assume standard error handling
+    // We handle errors and generic cleanup here
     if (errorMessage) errorMessage.parentElement.classList.add('hidden');
 
-    if (leaderboardBody) leaderboardBody.innerHTML = '';
+    // Show inline spinner in the leaderboard table
+    if (leaderboardBody) {
+        leaderboardBody.innerHTML = `
+            <tr>
+                <td colspan="7" style="text-align: center; padding: 3rem;">
+                    <div class="spinner"></div>
+                    <p style="color: var(--color-text-secondary); margin-top: 1rem;">Ranking top models across GEF experiments...</p>
+                </td>
+            </tr>
+        `;
+    }
 
     try {
         const response = await fetch(`${API_BASE_URL}/leaderboard`);
@@ -940,6 +954,9 @@ async function fetchLeaderboard() {
             leaderboardBody.innerHTML = '<tr><td colspan="7" style="text-align: center;">No data found for GEF experiments.</td></tr>';
             return;
         }
+
+        // Clear the spinner row before rendering data
+        leaderboardBody.innerHTML = '';
 
         leaderboard.forEach((row, index) => {
             const tr = document.createElement('tr');
