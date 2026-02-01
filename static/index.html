@@ -31,6 +31,7 @@
                 <div class="mode-toggle">
                     <button id="singleModeBtn" class="mode-btn active">Single Experiment</button>
                     <button id="compareModeBtn" class="mode-btn">Compare Experiments</button>
+                    <button id="plotCompareModeBtn" class="mode-btn">Global vs Grouped Plot</button>
                 </div>
 
                 <!-- Single Experiment Mode -->
@@ -137,6 +138,44 @@
                         <span class="btn-icon">→</span>
                     </button>
                 </div>
+
+                <!-- Plot Compare Mode -->
+                <div id="plotCompareMode" class="mode-content hidden">
+                    <h2 class="card-title">Global vs Grouped Comparison</h2>
+
+                    <div class="form-group">
+                        <label for="globalExperimentName">Global Experiment Name</label>
+                        <input type="text" id="globalExperimentName" placeholder="e.g., MLP_Global_Run"
+                            class="input-field">
+                    </div>
+
+                    <div class="form-group">
+                        <label for="globalParentFilter">Global Parent Run Name (Optional)</label>
+                        <input type="text" id="globalParentFilter" placeholder="e.g., specific_global_parent_run_name"
+                            class="input-field">
+                    </div>
+
+                    <div class="form-group">
+                        <label for="groupedExperimentName">Grouped Experiment Name</label>
+                        <input type="text" id="groupedExperimentName" placeholder="e.g., MLP_pt_Run"
+                            class="input-field">
+                    </div>
+
+                    <button id="generatePlotBtn" class="btn btn-primary">
+                        <span class="btn-text">Generate Comparison Plot</span>
+                        <span class="btn-icon">📊</span>
+                    </button>
+                </div>
+            </div>
+        </section>
+
+        <!-- Plot Display Section -->
+        <section id="plotSection" class="charts-section hidden">
+            <h2 class="section-title">Visual Comparison</h2>
+            <div class="card glass" style="text-align: center; padding: 1rem;">
+                <img id="comparisonPlotImage" src="" alt="Comparison Plot"
+                    style="max-width: 100%; border-radius: 8px; display: none;">
+                <p id="plotPlaceholder" style="color: var(--color-text-secondary);">Plot will appear here...</p>
             </div>
         </section>
 

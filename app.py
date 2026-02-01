@@ -14,6 +14,10 @@ import io
 import os
 import tempfile
 from dotenv import load_dotenv
+import matplotlib
+matplotlib.use('Agg')
+import matplotlib.pyplot as plt
+import seaborn as sns
 
 # Load environment variables from .env file
 load_dotenv()
@@ -276,6 +280,210 @@ def fetch_csv_from_mlflow(client: MlflowClient, run_id: str) -> Optional[pd.Data
         print(f"Error fetching CSV from MLflow: {str(e)}")
         return None
 
+def get_experiment_data_df(experiment_name: str, tracking_uri: str, parent_filter: Optional[str] = None) -> Optional[pd.DataFrame]:
+    """
+    Reusable function to fetch and concatenate evaluation results from an experiment.
+    """
+    mlflow.set_tracking_uri(tracking_uri)
+    client = MlflowClient()
+    
+    experiment = client.get_experiment_by_name(experiment_name)
+    if not experiment:
+        print(f"Experiment {experiment_name} not found")
+        return None
+    
+    experiment_id = experiment.experiment_id
+    
+    all_runs = client.search_runs(
+        experiment_ids=[experiment_id],
+        filter_string="",
+        run_view_type=mlflow.entities.ViewType.ACTIVE_ONLY,
+        max_results=1000
+    )
+    
+    if not all_runs:
+        return None
+        
+    # Build a map for easy lookup of run names
+    run_id_to_name = {run.info.run_id: run.data.tags.get("mlflow.runName", "Unknown") for run in all_runs}
+    
+    # Identify parent runs
+    parent_run_ids = set()
+    for run in all_runs:
+        parent_id = run.data.tags.get("mlflow.parentRunId")
+        if not parent_id: # Root run
+            # If a filter is provided, check if the run name matches 
+            # (assuming filter is the run name for now as per user request)
+            run_name = run.data.tags.get("mlflow.runName", "")
+            if parent_filter:
+                if parent_filter == run_name:
+                    parent_run_ids.add(run.info.run_id)
+            else:
+                 parent_run_ids.add(run.info.run_id)
+
+    all_dataframes = []
+    
+    for run in all_runs:
+        parent_id = run.data.tags.get("mlflow.parentRunId")
+        child_run_name = run.data.tags.get("mlflow.runName", "")
+        
+        # Check if this is an eval child run
+        if parent_id and parent_id in parent_run_ids and "eval" in child_run_name.lower():
+            parent_run_name = run_id_to_name.get(parent_id, "Unknown")
+            
+            try:
+                df = fetch_csv_from_mlflow(client, run.info.run_id)
+                if df is not None and not df.empty:
+                    df.insert(0, 'parent_run_name', parent_run_name)
+                    all_dataframes.append(df)
+            except Exception as e:
+                print(f"Error processing run {run.info.run_id}: {e}")
+                
+    if not all_dataframes:
+        return None
+    
+    return pd.concat(all_dataframes, ignore_index=True)
+
+@app.route('/api/plot-comparison', methods=['POST'])
+def plot_comparison_endpoint():
+    """
+    Generate and return a comparison plot between two experiments (Global vs Grouped).
+    """
+    try:
+        data = request.get_json()
+        global_experiment = data.get('global_experiment')
+        grouped_experiment = data.get('grouped_experiment')
+        global_parent_filter = data.get('global_parent_filter') # New optional parameter
+        tracking_uri = data.get('tracking_uri', DEFAULT_TRACKING_URI)
+        
+        if not global_experiment or not grouped_experiment:
+            return jsonify({'success': False, 'error': 'Both experiment names are required'}), 400
+
+        # Fetch data
+        # Apply filter only to global experiment as requested
+        df_global = get_experiment_data_df(global_experiment, tracking_uri, parent_filter=global_parent_filter)
+        df_grouped = get_experiment_data_df(grouped_experiment, tracking_uri)
+        
+        if df_global is None or df_global.empty:
+            return jsonify({'success': False, 'error': f'No data found for {global_experiment}'}), 404
+        if df_grouped is None or df_grouped.empty:
+            return jsonify({'success': False, 'error': f'No data found for {grouped_experiment}'}), 404
+            
+        # Data Processing (Logic from plot_compare.py)
+        # --------------------------------------------
+        
+        # 1. Map Timeseries ID to Groups from the Grouped DF
+        # We assume the grouped structure is in df_grouped
+        ts_mapping = df_grouped[['Timeseries ID', 'parent_run_name']].drop_duplicates()
+        ts_mapping = ts_mapping.drop_duplicates(subset=['Timeseries ID'])
+        
+        # Determine Grouping Name
+        try:
+            example_curr = ts_mapping['parent_run_name'].iloc[0]
+            parts = example_curr.split('_')
+            # Expecting format: <model>_<GROUP>_<group id>
+            if len(parts) >= 3:
+                group_type = parts[1]
+            else:
+                group_type = "Grouped"
+        except Exception:
+            group_type = "Grouped"
+            
+        group_label = group_type.capitalize()
+        grouped_mase_col = f'{group_label}_MASE'
+        
+        # 2. Prepare Global Data with Groups
+        # Inner join to restrict Global results to only those TS present in the Grouped experiment
+        # We drop parent_run_name from df_global to avoid collision/suffixes, as we want the grouping from ts_mapping
+        df_global_subset = df_global[['Timeseries ID', 'mase']]
+        df_global_mapped = df_global_subset.merge(ts_mapping, on='Timeseries ID', how='inner')
+        
+        # 3. Rename columns
+        df_global_mapped = df_global_mapped[['Timeseries ID', 'parent_run_name', 'mase']].rename(columns={'mase': 'Global_MASE'})
+        df_grouped_clean = df_grouped[['Timeseries ID', 'mase']].rename(columns={'mase': grouped_mase_col})
+        
+        # 4. Merge
+        # Check if we have common Timeseries IDs
+        if pd.merge(df_global_mapped, df_grouped_clean, on='Timeseries ID', how='inner').empty:
+             return jsonify({'success': False, 'error': 'No matching Timeseries IDs found between the two experiments'}), 400
+             
+        df_merged = df_global_mapped.merge(df_grouped_clean, on='Timeseries ID', how='inner')
+        
+        # 5. Calculate Diff
+        df_merged['Diff'] = df_merged['Global_MASE'] - df_merged[grouped_mase_col]
+        df_merged = df_merged.sort_values(by=['parent_run_name', 'Diff'])
+        
+        # Plotting
+        sns.set_theme(style="whitegrid")
+        # Create figure
+        fig, axes = plt.subplots(2, 1, figsize=(14, 12), gridspec_kw={'height_ratios': [1, 2]})
+        
+        # Plot 1: Aggregated
+        group_agg = df_merged.groupby('parent_run_name')[['Global_MASE', grouped_mase_col]].mean().reset_index()
+        group_melt = group_agg.melt(id_vars='parent_run_name', var_name='Model', value_name='Average MASE')
+        
+        sns.barplot(
+            data=group_melt,
+            x='parent_run_name',
+            y='Average MASE',
+            hue='Model',
+            palette={'Global_MASE': '#4c72b0', grouped_mase_col: '#c44e52'},
+            ax=axes[0]
+        )
+        axes[0].set_title(f'Average MASE by {group_label} (Lower is Better)', fontsize=16, pad=10)
+        axes[0].set_xlabel(f'{group_label} Group', fontsize=12)
+        axes[0].set_ylabel('MASE', fontsize=12)
+        axes[0].legend(title='Model')
+        axes[0].tick_params(axis='x', rotation=45)
+        
+        for container in axes[0].containers:
+            axes[0].bar_label(container, fmt='%.3f', padding=3)
+            
+        # Plot 2: Individual
+        colors = ['#4c72b0' if x < 0 else '#c44e52' for x in df_merged['Diff']]
+        x_positions = range(len(df_merged))
+        
+        axes[1].bar(x_positions, df_merged['Diff'], color=colors, alpha=0.8)
+        axes[1].axhline(0, color='black', linewidth=1)
+        axes[1].set_title(f'Difference in MASE per Time Series (Global - {group_label})', fontsize=16, pad=10)
+        axes[1].set_ylabel('MASE Difference', fontsize=12)
+        axes[1].set_xlabel(f'Time Series (Grouped by {group_label})', fontsize=12)
+        
+        axes[1].text(0.02, 0.95, 'Bars below 0: Global Model is Better', transform=axes[1].transAxes, 
+                     color='#4c72b0', fontweight='bold', fontsize=12)
+        axes[1].text(0.02, 0.91, f'Bars above 0: {group_label} Model is Better', transform=axes[1].transAxes, 
+                     color='#c44e52', fontweight='bold', fontsize=12)
+                     
+        # Group labels on x-axis (bottom plot)
+        group_counts = df_merged['parent_run_name'].value_counts(sort=False).reindex(df_merged['parent_run_name'].unique())
+        current_pos = 0
+        ylim = axes[1].get_ylim()
+        y_pos = ylim[0] - (ylim[1]-ylim[0])*0.05
+        
+        for group, count in group_counts.items():
+            center = current_pos + count / 2
+            axes[1].text(center, y_pos, group, ha='center', va='top', fontweight='bold', rotation=90 if len(group)>10 else 0)
+            if current_pos > 0:
+                axes[1].axvline(current_pos - 0.5, color='gray', linestyle='--', alpha=0.5)
+            current_pos += count
+            
+        axes[1].set_xticks([])
+        
+        plt.tight_layout()
+        
+        # Save to buffer
+        img_buf = io.BytesIO()
+        plt.savefig(img_buf, format='png')
+        img_buf.seek(0)
+        plt.close(fig)
+        
+        return Response(img_buf, mimetype='image/png')
+        
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        return jsonify({'success': False, 'error': str(e)}), 500
+
 @app.route('/api/export-csv', methods=['POST'])
 def export_concatenated_csv():
     """
@@ -293,92 +501,14 @@ def export_concatenated_csv():
                 'error': 'experiment_name is required'
             }), 400
         
-        # Set up MLflow client
-        mlflow.set_tracking_uri(tracking_uri)
-        client = MlflowClient()
+        # Use the helper function
+        final_df = get_experiment_data_df(experiment_name, tracking_uri, parent_filter)
         
-        # Get experiment
-        experiment = client.get_experiment_by_name(experiment_name)
-        if not experiment:
-            return jsonify({
-                'success': False,
-                'error': f'Experiment "{experiment_name}" not found'
-            }), 404
-        
-        experiment_id = experiment.experiment_id
-        
-        # Get all runs for the experiment in one go
-        all_runs = client.search_runs(
-            experiment_ids=[experiment_id],
-            filter_string="", # Fetch everything, we'll filter in-memory
-            run_view_type=mlflow.entities.ViewType.ACTIVE_ONLY,
-            max_results=1000
-        )
-        
-        if not all_runs:
-            return jsonify({
-                'success': False,
-                'error': 'No runs found for this experiment'
-            }), 404
-            
-        # Build a map for easy lookup of run names
-        run_id_to_name = {run.info.run_id: run.data.tags.get("mlflow.runName", "Unknown") for run in all_runs}
-        
-        # Map to track parent runs that match the user's filter (if provided)
-        # If no filter, all root runs are parents
-        parent_run_ids = set()
-        for run in all_runs:
-            parent_id = run.data.tags.get("mlflow.parentRunId")
-            if not parent_id: # Root run
-                # Apply user filter manually if provided (simpler to just check if it was in parent_runs before)
-                # But here we'll just check if it matches the name for now or just include all
-                parent_run_ids.add(run.info.run_id)
-
-        # Collect all CSVs from eval child runs
-        all_dataframes = []
-        successful_runs = 0
-        failed_runs = 0
-        
-        print(f"\n=== Processing experiment: {experiment_name} ===")
-        print(f"Total runs found: {len(all_runs)}")
-        
-        for run in all_runs:
-            parent_id = run.data.tags.get("mlflow.parentRunId")
-            child_run_name = run.data.tags.get("mlflow.runName", "")
-            
-            # Check if this is an eval child run of one of our parents
-            if parent_id and parent_id in parent_run_ids and "eval" in child_run_name.lower():
-                parent_run_name = run_id_to_name.get(parent_id, "Unknown")
-                print(f"  Eval run found: {child_run_name} (Parent: {parent_run_name})")
-                
-                try:
-                    df = fetch_csv_from_mlflow(client, run.info.run_id)
-                    if df is not None and not df.empty:
-                        # Add metadata columns
-                        df.insert(0, 'parent_run_name', parent_run_name)
-                        all_dataframes.append(df)
-                        successful_runs += 1
-                        print(f"    -> SUCCESS: Added {len(df)} rows")
-                    else:
-                        failed_runs += 1
-                        print(f"    -> FAILED: No data or artifact missing")
-                except Exception as e:
-                    failed_runs += 1
-                    print(f"    -> ERROR: {str(e)}")
-        
-        print(f"\n=== Summary ===")
-        print(f"Successful: {successful_runs}, Failed: {failed_runs}")
-        print(f"Total DataFrames collected: {len(all_dataframes)}")
-        
-        
-        if not all_dataframes:
+        if final_df is None or final_df.empty:
             return jsonify({
                 'success': False,
                 'error': 'No CSV files found for this experiment'
             }), 404
-        
-        # Concatenate all DataFrames
-        final_df = pd.concat(all_dataframes, ignore_index=True)
         
         # Convert to CSV
         csv_buffer = io.StringIO()

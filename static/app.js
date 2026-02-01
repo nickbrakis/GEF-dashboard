@@ -40,13 +40,25 @@ const downloadCsvButton = document.getElementById('downloadCsvButton');
 const compareButton = document.getElementById('compareButton');
 const experimentSelect = document.getElementById('experimentSelect');
 const loadExperimentsBtn = document.getElementById('loadExperimentsBtn');
-const compareParentFilterInput = document.getElementById('compareParentFilter');
+
+
+
+
+// DOM Elements - Plot Compare Mode
+const globalExperimentNameInput = document.getElementById('globalExperimentName');
+const globalParentFilterInput = document.getElementById('globalParentFilter'); // New
+const groupedExperimentNameInput = document.getElementById('groupedExperimentName');
+const generatePlotBtn = document.getElementById('generatePlotBtn');
+const plotPlaceholder = document.getElementById('plotPlaceholder');
+const comparisonPlotImage = document.getElementById('comparisonPlotImage');
 
 // DOM Elements - Mode Toggle
 const singleModeBtn = document.getElementById('singleModeBtn');
 const compareModeBtn = document.getElementById('compareModeBtn');
+const plotCompareModeBtn = document.getElementById('plotCompareModeBtn');
 const singleMode = document.getElementById('singleMode');
 const compareMode = document.getElementById('compareMode');
+const plotCompareMode = document.getElementById('plotCompareMode');
 
 // DOM Elements - Shared
 const loadingState = document.getElementById('loadingState');
@@ -62,6 +74,7 @@ const csvPreviewSection = document.getElementById('csvPreviewSection');
 const csvPreviewTable = document.getElementById('csvPreviewTable');
 const closePreviewBtn = document.getElementById('closePreviewBtn');
 
+
 // Event Listeners - Single Mode
 fetchButton.addEventListener('click', fetchMetrics);
 loadSingleExperimentsBtn.addEventListener('click', loadSingleExperiments);
@@ -72,9 +85,18 @@ compareButton.addEventListener('click', compareExperiments);
 loadExperimentsBtn.addEventListener('click', loadAvailableExperiments);
 
 // Event Listeners - Mode Toggle
+
+
+// Event Listeners - Mode Toggle
 singleModeBtn.addEventListener('click', () => switchMode('single'));
 compareModeBtn.addEventListener('click', () => switchMode('compare'));
+plotCompareModeBtn.addEventListener('click', () => switchMode('plotCompare'));
 closePreviewBtn.addEventListener('click', () => csvPreviewSection.classList.add('hidden'));
+
+// Event Listeners - Plot Compare Mode
+if (generatePlotBtn) {
+    generatePlotBtn.addEventListener('click', generateComparisonPlot);
+}
 
 // Allow Enter key to trigger fetch
 experimentNameInput.addEventListener('keypress', (e) => {
@@ -94,13 +116,24 @@ function switchMode(mode) {
     if (mode === 'single') {
         singleModeBtn.classList.add('active');
         compareModeBtn.classList.remove('active');
+        plotCompareModeBtn.classList.remove('active');
         singleMode.classList.remove('hidden');
         compareMode.classList.add('hidden');
-    } else {
+        plotCompareMode.classList.add('hidden');
+    } else if (mode === 'compare') {
         compareModeBtn.classList.add('active');
         singleModeBtn.classList.remove('active');
+        plotCompareModeBtn.classList.remove('active');
         compareMode.classList.remove('hidden');
         singleMode.classList.add('hidden');
+        plotCompareMode.classList.add('hidden');
+    } else {
+        plotCompareModeBtn.classList.add('active');
+        singleModeBtn.classList.remove('active');
+        compareModeBtn.classList.remove('active');
+        plotCompareMode.classList.remove('hidden');
+        singleMode.classList.add('hidden');
+        compareMode.classList.add('hidden');
     }
     // Hide results when switching modes
     hideAllSections();
@@ -188,7 +221,9 @@ function hideAllSections() {
     chartsSection.classList.add('hidden');
     runsSection.classList.add('hidden');
     downloadCsvButton.classList.add('hidden');
+    downloadCsvButton.classList.add('hidden');
     csvPreviewSection.classList.add('hidden');
+    plotSection.classList.add('hidden');
 }
 
 // Display results
@@ -818,6 +853,52 @@ function displayCSVPreview(csvText) {
     csvPreviewTable.appendChild(table);
     csvPreviewSection.classList.remove('hidden');
     csvPreviewSection.scrollIntoView({ behavior: 'smooth' });
+}
+
+// Generate Comparison Plot
+async function generateComparisonPlot() {
+    const globalName = globalExperimentNameInput.value.trim();
+    const groupedName = groupedExperimentNameInput.value.trim();
+    const globalParentFilter = globalParentFilterInput.value.trim() || null;
+
+    if (!globalName || !groupedName) {
+        showError('Please enter both Global and Grouped experiment names');
+        return;
+    }
+
+    showLoading();
+
+    try {
+        const response = await fetch(`${API_BASE_URL}/plot-comparison`, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({
+                global_experiment: globalName,
+                grouped_experiment: groupedName,
+                global_parent_filter: globalParentFilter
+            })
+        });
+
+        if (!response.ok) {
+            const errorData = await response.json();
+            throw new Error(errorData.error || 'Failed to generate plot');
+        }
+
+        const blob = await response.blob();
+        const imageUrl = URL.createObjectURL(blob);
+
+        comparisonPlotImage.src = imageUrl;
+        comparisonPlotImage.style.display = 'block';
+        plotPlaceholder.style.display = 'none';
+
+        hideAllSections();
+        plotSection.classList.remove('hidden');
+
+    } catch (error) {
+        showError(error.message);
+    }
 }
 
 // Initialize
