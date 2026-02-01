@@ -257,6 +257,123 @@ def compare_experiments():
             'error': str(e)
         }), 500
 
+
+@app.route('/api/leaderboard', methods=['GET'])
+def get_leaderboard():
+    """
+    Fetch the best performing model (Parent Run) from each of the specific GEF experiments.
+    Experiments: GEF_MLP, GEF_NBEATS, GEF_LSTM, GEF_LightGBM
+    Ranking Metric: MASE
+    """
+    try:
+        tracking_uri = request.args.get('tracking_uri', DEFAULT_TRACKING_URI)
+        target_experiments = ['GEF_MLP', 'GEF_NBEATS', 'GEF_LSTM', 'GEF_LightGBM']
+        
+        leaderboard = []
+        
+        for exp_name in target_experiments:
+            try:
+                # 1. Fetch MASE to determine the winner
+                mase_results = get_eval_metrics(
+                    tracking_uri=tracking_uri,
+                    experiment_name=exp_name,
+                    metric_name='mase',
+                    verbose=False
+                )
+                
+                if not mase_results:
+                    continue
+
+                # Agregate by Parent Run
+                parent_run_stats = {}
+                
+                for r in mase_results:
+                    val = r["metric_value"]
+                    if math.isnan(val):
+                        continue
+                        
+                    p_name = r["parent_run_name"]
+                    p_id = r["parent_run_id"]
+                    
+                    if p_name not in parent_run_stats:
+                        parent_run_stats[p_name] = {
+                            'parent_run_id': p_id,
+                            'weighted_sum': 0.0,
+                            'total_ts_count': 0
+                        }
+                    
+                    # We need TS count for weighting
+                    ts_count = get_timeseries_count(tracking_uri, r["eval_run_id"])
+                    
+                    if ts_count > 0:
+                        parent_run_stats[p_name]['weighted_sum'] += val * ts_count
+                        parent_run_stats[p_name]['total_ts_count'] += ts_count
+
+                # Find best Parent Run (Lowest MASE)
+                best_parent_run = None
+                best_mase = float('inf')
+                
+                for p_name, stats in parent_run_stats.items():
+                    if stats['total_ts_count'] > 0:
+                        avg_mase = stats['weighted_sum'] / stats['total_ts_count']
+                        if avg_mase < best_mase:
+                            best_mase = avg_mase
+                            best_parent_run = p_name
+                
+                if best_parent_run:
+                    # Store what we have
+                    row = {
+                        'experiment': exp_name,
+                        'parent_run': best_parent_run,
+                        'mase': best_mase,
+                        'mae': None,
+                        'mape': None,
+                        'rmse': None
+                    }
+                    
+                    # Helper to get other metrics for this specific parent run
+                    for m in ['mae', 'mape', 'rmse']:
+                         other_results = get_eval_metrics(
+                            tracking_uri=tracking_uri,
+                            experiment_name=exp_name,
+                            metric_name=m,
+                            parent_filter=best_parent_run, # Exact match filter
+                            verbose=False
+                        )
+                         
+                         w_sum = 0
+                         tot_count = 0
+                         for r in other_results:
+                             val = r["metric_value"]
+                             if math.isnan(val): continue
+                             ts_c = get_timeseries_count(tracking_uri, r["eval_run_id"])
+                             if ts_c > 0:
+                                 w_sum += val * ts_c
+                                 tot_count += ts_c
+                        
+                         if tot_count > 0:
+                             row[m] = w_sum / tot_count
+                    
+                    leaderboard.append(row)
+
+            except Exception as e:
+                print(f"Error processing leaderboard for {exp_name}: {e}")
+                continue
+        
+        # Sort leaderboard by MASE ascending
+        leaderboard.sort(key=lambda x: x['mase'])
+        
+        return jsonify({
+            'success': True,
+            'leaderboard': leaderboard
+        })
+        
+    except Exception as e:
+        return jsonify({
+            'success': False,
+            'error': str(e)
+        }), 500
+
 def fetch_csv_from_mlflow(client: MlflowClient, run_id: str) -> Optional[pd.DataFrame]:
     """
     Fetch evaluation_results_all_ts.csv from MLflow artifacts for a given run.

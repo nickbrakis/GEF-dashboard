@@ -14,221 +14,260 @@
 </head>
 
 <body>
-    <div class="container">
-        <!-- Header -->
-        <header class="header">
-            <div class="header-content">
-                <h1 class="title">
-                    <span class="gradient-text">MLflow</span> Metrics Dashboard
+    <div class="app-layout">
+        <!-- Sidebar Navigation -->
+        <aside class="sidebar">
+            <div class="sidebar-header">
+                <img src="/static/dashboard_logo.png" alt="Logo" class="sidebar-logo">
+                <h1 class="sidebar-title">
+                    <span class="gradient-text">MLflow</span> Metrics
                 </h1>
-                <p class="subtitle">Visualize and analyze your experiment metrics</p>
             </div>
-        </header>
 
-        <!-- Control Panel -->
-        <section class="control-panel">
-            <div class="card glass">
-                <div class="mode-toggle">
-                    <button id="singleModeBtn" class="mode-btn active">Single Experiment</button>
-                    <button id="compareModeBtn" class="mode-btn">Compare Experiments</button>
-                    <button id="plotCompareModeBtn" class="mode-btn">Global vs Grouped Plot</button>
-                </div>
+            <nav class="sidebar-nav">
+                <button id="singleModeBtn" class="nav-btn active">
+                    <span class="nav-icon">📊</span>
+                    <span class="nav-text">Single Experiment</span>
+                </button>
+                <button id="compareModeBtn" class="nav-btn">
+                    <span class="nav-icon">⚖️</span>
+                    <span class="nav-text">Compare Experiments</span>
+                </button>
+                <button id="plotCompareModeBtn" class="nav-btn">
+                    <span class="nav-icon">📈</span>
+                    <span class="nav-text">Global vs Grouped</span>
+                </button>
+                <button id="leaderboardModeBtn" class="nav-btn">
+                    <span class="nav-icon">🏆</span>
+                    <span class="nav-text">Leaderboard</span>
+                </button>
+            </nav>
 
-                <!-- Single Experiment Mode -->
-                <div id="singleMode" class="mode-content">
-                    <h2 class="card-title">Experiment Configuration</h2>
+            <div class="sidebar-footer">
+                <p class="footer-text">v0.1.0 Dashboard</p>
+            </div>
+        </aside>
 
-                    <div class="form-group">
-                        <label for="experimentName">Experiment Name</label>
-                        <button id="loadSingleExperimentsBtn" class="btn-secondary">
-                            <span>Load Available Experiments</span>
-                        </button>
-                        <select id="singleExperimentSelect" class="select-field" size="6">
-                            <option disabled selected>Click "Load Available Experiments" first...</option>
-                        </select>
-                        <p class="helper-text">Or enter manually below:</p>
-                        <input type="text" id="experimentName" placeholder="Enter experiment name..."
-                            class="input-field">
-                    </div>
+        <!-- Main Content Area -->
+        <main class="main-content">
+            <div class="content-container">
+                <!-- Header / Welcome Message (Optional, kept minimal) -->
+                <header class="content-header">
+                    <h2 class="page-title">Dashboard Overview</h2>
+                    <p class="page-subtitle">Visualize and analyze your experiment metrics</p>
+                </header>
 
-                    <div class="form-group">
-                        <label>Metrics to Display</label>
-                        <div class="checkbox-group">
-                            <label class="checkbox-label">
-                                <input type="checkbox" id="metricMase" value="mase" checked>
-                                <span class="checkbox-text">MASE</span>
-                            </label>
-                            <label class="checkbox-label">
-                                <input type="checkbox" id="metricRmse" value="rmse" checked>
-                                <span class="checkbox-text">RMSE</span>
-                            </label>
-                            <label class="checkbox-label">
-                                <input type="checkbox" id="metricMape" value="mape" checked>
-                                <span class="checkbox-text">MAPE</span>
-                            </label>
-                            <label class="checkbox-label">
-                                <input type="checkbox" id="metricMae" value="mae" checked>
-                                <span class="checkbox-text">MAE</span>
-                            </label>
+                <!-- Control Panel (Inputs) -->
+                <section class="control-panel">
+                    <!-- Single Experiment Mode Inputs -->
+                    <div id="singleMode" class="mode-content">
+                        <div class="card glass">
+                            <h2 class="card-title">Single Experiment Configuration</h2>
+                            <div class="form-group">
+                                <label for="experimentName">Experiment Name</label>
+                                <button id="loadSingleExperimentsBtn" class="btn-secondary">Load Available
+                                    Experiments</button>
+                                <select id="singleExperimentSelect" class="select-field" size="6">
+                                    <option disabled selected>Click "Load Available Experiments" first...</option>
+                                </select>
+                                <p class="helper-text">Or enter manually below:</p>
+                                <input type="text" id="experimentName" placeholder="Enter experiment name..."
+                                    class="input-field">
+                            </div>
+
+                            <div class="form-group">
+                                <label>Metrics to Display</label>
+                                <div class="checkbox-group">
+                                    <label class="checkbox-label"><input type="checkbox" id="metricMase" value="mase"
+                                            checked><span class="checkbox-text">MASE</span></label>
+                                    <label class="checkbox-label"><input type="checkbox" id="metricRmse" value="rmse"
+                                            checked><span class="checkbox-text">RMSE</span></label>
+                                    <label class="checkbox-label"><input type="checkbox" id="metricMape" value="mape"
+                                            checked><span class="checkbox-text">MAPE</span></label>
+                                    <label class="checkbox-label"><input type="checkbox" id="metricMae" value="mae"
+                                            checked><span class="checkbox-text">MAE</span></label>
+                                </div>
+                            </div>
+
+                            <div class="form-group">
+                                <label for="parentFilter">Parent Run Name (Optional)</label>
+                                <input type="text" id="parentFilter" placeholder="e.g., specific_parent_run_name"
+                                    class="input-field">
+                            </div>
+
+                            <button id="fetchButton" class="btn btn-primary">
+                                <span class="btn-text">Fetch Metrics</span>
+                                <span class="btn-icon">→</span>
+                            </button>
+
+                            <button id="downloadCsvButton" class="btn btn-secondary hidden" style="margin-top: 1rem;">
+                                <span class="btn-text">Download Concatenated CSV</span>
+                                <span class="btn-icon">↓</span>
+                            </button>
                         </div>
                     </div>
 
-                    <div class="form-group">
-                        <label for="parentFilter">Parent Run Filter (Optional)</label>
-                        <input type="text" id="parentFilter" placeholder="e.g., tags.mlflow.runName LIKE 'model_%'"
-                            class="input-field">
-                    </div>
+                    <!-- Compare Mode Inputs -->
+                    <div id="compareMode" class="mode-content hidden">
+                        <div class="card glass">
+                            <h2 class="card-title">Compare Experiments</h2>
+                            <div class="form-group">
+                                <label for="experimentSelect">Select Experiments to Compare</label>
+                                <button id="loadExperimentsBtn" class="btn-secondary">Load Available
+                                    Experiments</button>
+                                <select id="experimentSelect" multiple class="select-field" size="8">
+                                    <option disabled>Click "Load Available Experiments" first...</option>
+                                </select>
+                                <p class="helper-text">Hold Ctrl (Cmd on Mac) to select multiple experiments</p>
+                            </div>
 
-                    <button id="fetchButton" class="btn btn-primary">
-                        <span class="btn-text">Fetch Metrics</span>
-                        <span class="btn-icon">→</span>
-                    </button>
+                            <div class="form-group">
+                                <label>Metric to Compare</label>
+                                <div class="radio-group">
+                                    <label class="radio-label"><input type="radio" name="compareMetric" value="mase"
+                                            checked><span class="radio-text">MASE</span></label>
+                                    <label class="radio-label"><input type="radio" name="compareMetric"
+                                            value="rmse"><span class="radio-text">RMSE</span></label>
+                                    <label class="radio-label"><input type="radio" name="compareMetric"
+                                            value="mape"><span class="radio-text">MAPE</span></label>
+                                    <label class="radio-label"><input type="radio" name="compareMetric"
+                                            value="mae"><span class="radio-text">MAE</span></label>
+                                </div>
+                            </div>
 
-                    <button id="downloadCsvButton" class="btn btn-secondary hidden" style="margin-top: 1rem;">
-                        <span class="btn-text">Download Concatenated CSV</span>
-                        <span class="btn-icon">↓</span>
-                    </button>
-                </div>
+                            <div class="form-group">
+                                <label for="compareParentFilter">Parent Run Filter (Optional)</label>
+                                <input type="text" id="compareParentFilter"
+                                    placeholder="e.g., tags.mlflow.runName LIKE 'model_%'" class="input-field">
+                            </div>
 
-                <!-- Compare Mode -->
-                <div id="compareMode" class="mode-content hidden">
-                    <h2 class="card-title">Compare Experiments</h2>
-
-                    <div class="form-group">
-                        <label for="experimentSelect">Select Experiments to Compare</label>
-                        <button id="loadExperimentsBtn" class="btn-secondary">
-                            <span>Load Available Experiments</span>
-                        </button>
-                        <select id="experimentSelect" multiple class="select-field" size="8">
-                            <option disabled>Click "Load Available Experiments" first...</option>
-                        </select>
-                        <p class="helper-text">Hold Ctrl (Cmd on Mac) to select multiple experiments</p>
-                    </div>
-
-                    <div class="form-group">
-                        <label>Metric to Compare</label>
-                        <div class="radio-group">
-                            <label class="radio-label">
-                                <input type="radio" name="compareMetric" value="mase" checked>
-                                <span class="radio-text">MASE</span>
-                            </label>
-                            <label class="radio-label">
-                                <input type="radio" name="compareMetric" value="rmse">
-                                <span class="radio-text">RMSE</span>
-                            </label>
-                            <label class="radio-label">
-                                <input type="radio" name="compareMetric" value="mape">
-                                <span class="radio-text">MAPE</span>
-                            </label>
-                            <label class="radio-label">
-                                <input type="radio" name="compareMetric" value="mae">
-                                <span class="radio-text">MAE</span>
-                            </label>
+                            <button id="compareButton" class="btn btn-primary">
+                                <span class="btn-text">Compare Experiments</span>
+                                <span class="btn-icon">→</span>
+                            </button>
                         </div>
                     </div>
 
-                    <div class="form-group">
-                        <label for="compareParentFilter">Parent Run Filter (Optional)</label>
-                        <input type="text" id="compareParentFilter"
-                            placeholder="e.g., tags.mlflow.runName LIKE 'model_%'" class="input-field">
+                    <!-- Plot Compare Mode Inputs -->
+                    <div id="plotCompareMode" class="mode-content hidden">
+                        <div class="card glass">
+                            <h2 class="card-title">Global vs Grouped Comparison</h2>
+                            <div class="input-row">
+                                <div class="form-group" style="flex: 1;">
+                                    <label for="globalExperimentName">Global Experiment Name</label>
+                                    <input type="text" id="globalExperimentName" placeholder="e.g., MLP_Global_Run"
+                                        class="input-field">
+                                </div>
+                                <div class="form-group" style="flex: 1;">
+                                    <label for="globalParentFilter">Global Parent Run Name (Optional)</label>
+                                    <input type="text" id="globalParentFilter"
+                                        placeholder="e.g., specific_global_parent_run_name" class="input-field">
+                                </div>
+                            </div>
+                            <div class="form-group">
+                                <label for="groupedExperimentName">Grouped Experiment Name</label>
+                                <input type="text" id="groupedExperimentName" placeholder="e.g., MLP_pt_Run"
+                                    class="input-field">
+                            </div>
+                            <button id="generatePlotBtn" class="btn btn-primary">
+                                <span class="btn-text">Generate Comparison Plot</span>
+                                <span class="btn-icon">📊</span>
+                            </button>
+                        </div>
                     </div>
 
-                    <button id="compareButton" class="btn btn-primary">
-                        <span class="btn-text">Compare Experiments</span>
-                        <span class="btn-icon">→</span>
-                    </button>
-                </div>
+                    <!-- Leaderboard Mode -->
+                    <div id="leaderboardMode" class="mode-content hidden">
+                        <div class="card glass">
+                            <h2 class="card-title">Global Models Leaderboard</h2>
+                            <p class="helper-text" style="margin-bottom: 1rem;">Comparison of the best performing model
+                                from each architecture.</p>
 
-                <!-- Plot Compare Mode -->
-                <div id="plotCompareMode" class="mode-content hidden">
-                    <h2 class="card-title">Global vs Grouped Comparison</h2>
-
-                    <div class="form-group">
-                        <label for="globalExperimentName">Global Experiment Name</label>
-                        <input type="text" id="globalExperimentName" placeholder="e.g., MLP_Global_Run"
-                            class="input-field">
+                            <div class="table-container">
+                                <table class="custom-table" id="leaderboardTable">
+                                    <thead>
+                                        <tr>
+                                            <th>Rank</th>
+                                            <th>Experiment</th>
+                                            <th>Parent Run</th>
+                                            <th>MASE</th>
+                                            <th>MAE</th>
+                                            <th>MAPE</th>
+                                            <th>RMSE</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody id="leaderboardBody">
+                                        <!-- Rows inserted by JS -->
+                                    </tbody>
+                                </table>
+                            </div>
+                        </div>
                     </div>
+                </section>
 
-                    <div class="form-group">
-                        <label for="globalParentFilter">Global Parent Run Name (Optional)</label>
-                        <input type="text" id="globalParentFilter" placeholder="e.g., specific_global_parent_run_name"
-                            class="input-field">
+                <!-- Loading State -->
+                <div id="loadingState" class="loading-state hidden">
+                    <div class="spinner"></div>
+                    <p>Loading metrics...</p>
+                </div>
+
+                <!-- Error State -->
+                <div id="errorState" class="error-state hidden">
+                    <div class="error-icon">⚠️</div>
+                    <p id="errorMessage"></p>
+                </div>
+
+                <!-- Plot Display Section -->
+                <section id="plotSection" class="charts-section hidden">
+                    <h2 class="section-title">Visual Comparison</h2>
+                    <div class="card glass" style="text-align: center; padding: 1rem;">
+                        <img id="comparisonPlotImage" src="" alt="Comparison Plot"
+                            style="max-width: 100%; border-radius: 8px; display: none;">
+                        <p id="plotPlaceholder" style="color: var(--color-text-secondary);">Plot will appear here...</p>
                     </div>
+                </section>
 
-                    <div class="form-group">
-                        <label for="groupedExperimentName">Grouped Experiment Name</label>
-                        <input type="text" id="groupedExperimentName" placeholder="e.g., MLP_pt_Run"
-                            class="input-field">
+                <!-- Statistics Dashboard -->
+                <section id="statsSection" class="stats-section hidden">
+                    <h2 class="section-title">Statistics Overview</h2>
+                    <div id="statsGrid" class="stats-grid">
+                        <!-- Stats cards will be dynamically inserted here -->
                     </div>
+                </section>
 
-                    <button id="generatePlotBtn" class="btn btn-primary">
-                        <span class="btn-text">Generate Comparison Plot</span>
-                        <span class="btn-icon">📊</span>
-                    </button>
-                </div>
+                <!-- Charts Section -->
+                <section id="chartsSection" class="charts-section hidden">
+                    <h2 class="section-title">Metric Visualizations</h2>
+                    <div id="chartsGrid" class="charts-grid">
+                        <!-- Charts will be dynamically inserted here -->
+                    </div>
+                </section>
+
+                <!-- Runs Table -->
+                <section id="runsSection" class="runs-section hidden">
+                    <h2 class="section-title">Run Details</h2>
+                    <div class="card glass">
+                        <div id="runsTable" class="runs-table">
+                            <!-- Table will be dynamically inserted here -->
+                        </div>
+                    </div>
+                </section>
+
+                <!-- CSV Preview -->
+                <section id="csvPreviewSection" class="hidden" style="margin-top: 2rem;">
+                    <div
+                        style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1rem;">
+                        <h2 class="section-title" style="margin-bottom: 0;">CSV Data Preview</h2>
+                        <button id="closePreviewBtn" class="btn btn-secondary">Close Preview</button>
+                    </div>
+                    <div class="card glass">
+                        <div id="csvPreviewTable" class="runs-table" style="max-height: 400px; overflow-y: auto;">
+                            <!-- Preview table will be dynamically inserted here -->
+                        </div>
+                    </div>
+                </section>
             </div>
-        </section>
-
-        <!-- Plot Display Section -->
-        <section id="plotSection" class="charts-section hidden">
-            <h2 class="section-title">Visual Comparison</h2>
-            <div class="card glass" style="text-align: center; padding: 1rem;">
-                <img id="comparisonPlotImage" src="" alt="Comparison Plot"
-                    style="max-width: 100%; border-radius: 8px; display: none;">
-                <p id="plotPlaceholder" style="color: var(--color-text-secondary);">Plot will appear here...</p>
-            </div>
-        </section>
-
-        <!-- Loading State -->
-        <div id="loadingState" class="loading-state hidden">
-            <div class="spinner"></div>
-            <p>Loading metrics...</p>
-        </div>
-
-        <!-- Error State -->
-        <div id="errorState" class="error-state hidden">
-            <div class="error-icon">⚠️</div>
-            <p id="errorMessage"></p>
-        </div>
-
-        <!-- Statistics Dashboard -->
-        <section id="statsSection" class="stats-section hidden">
-            <h2 class="section-title">Statistics Overview</h2>
-            <div id="statsGrid" class="stats-grid">
-                <!-- Stats cards will be dynamically inserted here -->
-            </div>
-        </section>
-
-        <!-- Charts Section -->
-        <section id="chartsSection" class="charts-section hidden">
-            <h2 class="section-title">Metric Visualizations</h2>
-            <div id="chartsGrid" class="charts-grid">
-                <!-- Charts will be dynamically inserted here -->
-            </div>
-        </section>
-
-        <!-- Runs Table -->
-        <section id="runsSection" class="runs-section hidden">
-            <h2 class="section-title">Run Details</h2>
-            <div class="card glass">
-                <div id="runsTable" class="runs-table">
-                    <!-- Table will be dynamically inserted here -->
-                </div>
-            </div>
-        </section>
-
-        <!-- CSV Preview -->
-        <section id="csvPreviewSection" class="hidden" style="margin-top: 2rem;">
-            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1rem;">
-                <h2 class="section-title" style="margin-bottom: 0;">CSV Data Preview</h2>
-                <button id="closePreviewBtn" class="btn btn-secondary">Close Preview</button>
-            </div>
-            <div class="card glass">
-                <div id="csvPreviewTable" class="runs-table" style="max-height: 400px; overflow-y: auto;">
-                    <!-- Preview table will be dynamically inserted here -->
-                </div>
-            </div>
-        </section>
+        </main>
     </div>
 
     <script src="/static/app.js"></script>

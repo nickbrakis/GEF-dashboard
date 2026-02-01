@@ -56,9 +56,12 @@ const comparisonPlotImage = document.getElementById('comparisonPlotImage');
 const singleModeBtn = document.getElementById('singleModeBtn');
 const compareModeBtn = document.getElementById('compareModeBtn');
 const plotCompareModeBtn = document.getElementById('plotCompareModeBtn');
+const leaderboardModeBtn = document.getElementById('leaderboardModeBtn'); // New
 const singleMode = document.getElementById('singleMode');
 const compareMode = document.getElementById('compareMode');
 const plotCompareMode = document.getElementById('plotCompareMode');
+const leaderboardMode = document.getElementById('leaderboardMode'); // New
+const leaderboardBody = document.getElementById('leaderboardBody'); // New
 
 // DOM Elements - Shared
 const loadingState = document.getElementById('loadingState');
@@ -98,6 +101,9 @@ if (generatePlotBtn) {
     generatePlotBtn.addEventListener('click', generateComparisonPlot);
 }
 
+// Event Listeners - Leaderboard Mode
+leaderboardModeBtn.addEventListener('click', () => switchMode('leaderboard'));
+
 // Allow Enter key to trigger fetch
 experimentNameInput.addEventListener('keypress', (e) => {
     if (e.key === 'Enter') fetchMetrics();
@@ -112,30 +118,37 @@ singleExperimentSelect.addEventListener('change', () => {
 });
 
 // Mode switching function
+// Mode switching function
 function switchMode(mode) {
+    // Reset all buttons
+    singleModeBtn.classList.remove('active');
+    compareModeBtn.classList.remove('active');
+    plotCompareModeBtn.classList.remove('active');
+    if (leaderboardModeBtn) leaderboardModeBtn.classList.remove('active');
+
+    // Hide all sections
+    singleMode.classList.add('hidden');
+    compareMode.classList.add('hidden');
+    plotCompareMode.classList.add('hidden');
+    if (leaderboardMode) leaderboardMode.classList.add('hidden');
+
+    // Activate selected mode
     if (mode === 'single') {
         singleModeBtn.classList.add('active');
-        compareModeBtn.classList.remove('active');
-        plotCompareModeBtn.classList.remove('active');
         singleMode.classList.remove('hidden');
-        compareMode.classList.add('hidden');
-        plotCompareMode.classList.add('hidden');
     } else if (mode === 'compare') {
         compareModeBtn.classList.add('active');
-        singleModeBtn.classList.remove('active');
-        plotCompareModeBtn.classList.remove('active');
         compareMode.classList.remove('hidden');
-        singleMode.classList.add('hidden');
-        plotCompareMode.classList.add('hidden');
-    } else {
+    } else if (mode === 'plotCompare') {
         plotCompareModeBtn.classList.add('active');
-        singleModeBtn.classList.remove('active');
-        compareModeBtn.classList.remove('active');
         plotCompareMode.classList.remove('hidden');
-        singleMode.classList.add('hidden');
-        compareMode.classList.add('hidden');
+    } else if (mode === 'leaderboard') {
+        if (leaderboardModeBtn) leaderboardModeBtn.classList.add('active');
+        if (leaderboardMode) leaderboardMode.classList.remove('hidden');
+        fetchLeaderboard();
     }
-    // Hide results when switching modes
+
+    // Hide results when switching modes (common cleanup)
     hideAllSections();
 }
 
@@ -904,3 +917,54 @@ async function generateComparisonPlot() {
 // Initialize
 console.log('MLflow Metrics Visualization App loaded');
 console.log('Ready to fetch metrics from MLflow experiments');
+
+
+
+async function fetchLeaderboard() {
+    showLoading();
+    // hideError(); // Helper might not exist or might be inside showLoading, let's assume standard error handling
+    if (errorMessage) errorMessage.parentElement.classList.add('hidden');
+
+    if (leaderboardBody) leaderboardBody.innerHTML = '';
+
+    try {
+        const response = await fetch(`${API_BASE_URL}/leaderboard`);
+        const data = await response.json();
+
+        if (!data.success) {
+            throw new Error(data.error);
+        }
+
+        const leaderboard = data.leaderboard;
+        if (leaderboard.length === 0) {
+            leaderboardBody.innerHTML = '<tr><td colspan="7" style="text-align: center;">No data found for GEF experiments.</td></tr>';
+            return;
+        }
+
+        leaderboard.forEach((row, index) => {
+            const tr = document.createElement('tr');
+
+            // Highlight winner
+            if (index === 0) {
+                tr.style.background = 'rgba(255, 215, 0, 0.1)';
+                tr.style.fontWeight = 'bold';
+            }
+
+            tr.innerHTML = `
+                <td>${index === 0 ? '🏆' : index + 1}</td>
+                <td>${row.experiment}</td>
+                <td title="${row.parent_run}">${row.parent_run}</td>
+                <td>${(row.mase !== null ? row.mase.toFixed(4) : 'N/A')}</td>
+                <td>${(row.mae !== null ? row.mae.toFixed(4) : 'N/A')}</td>
+                <td>${(row.mape !== null ? row.mape.toFixed(4) : 'N/A')}</td>
+                <td>${(row.rmse !== null ? row.rmse.toFixed(4) : 'N/A')}</td>
+            `;
+            leaderboardBody.appendChild(tr);
+        });
+
+    } catch (error) {
+        showError(error.message);
+    } finally {
+        hideLoading();
+    }
+}

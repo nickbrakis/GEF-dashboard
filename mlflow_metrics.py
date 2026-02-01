@@ -43,13 +43,18 @@ def get_eval_metrics(
         print(f"Found experiment: {experiment_name} (ID: {experiment_id})")
     
     # Get all runs for the experiment
-    filter_string = parent_filter if parent_filter else ""
+    # We fetch all (or filtered by name if possible, but let's do Python filtering to be safe/exact match as requested)
+    # Note: Previously parent_filter was treated as a SQL filter string. Now it is a strict run name.
+    
     parent_runs = client.search_runs(
         experiment_ids=[experiment_id],
-        filter_string=filter_string,
+        filter_string="",
         run_view_type=mlflow.entities.ViewType.ACTIVE_ONLY,
         max_results=1000,
     )
+    
+    if parent_filter:
+        parent_runs = [r for r in parent_runs if r.data.tags.get("mlflow.runName") == parent_filter]
     
     if verbose:
         print(f"Found {len(parent_runs)} runs")
