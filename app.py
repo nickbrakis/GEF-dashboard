@@ -18,6 +18,11 @@ import matplotlib
 matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 import seaborn as sns
+from concurrent.futures import ThreadPoolExecutor, as_completed
+
+# Global cache for timeseries counts to avoid redundant API calls within a single request context
+# In a production app, this should be a more robust cache (e.g., Redis or a TTL-based cache)
+ts_count_cache = {}
 
 # Load environment variables from .env file
 load_dotenv()
@@ -258,121 +263,176 @@ def compare_experiments():
         }), 500
 
 
+def get_cached_ts_count(tracking_uri: str, run_id: str) -> int:
+    """Helper to fetch timeseries count with basic caching."""
+    if run_id in ts_count_cache:
+        return ts_count_cache[run_id]
+    count = get_timeseries_count(tracking_uri, run_id)
+    ts_count_cache[run_id] = count
+    return count
+
+def get_experiment_total_mase(tracking_uri: str, experiment_name: str) -> Optional[float]:
+    """Helper to calculate total weighted MASE for an entire experiment using parallelization."""
+    try:
+        results = get_eval_metrics(
+            tracking_uri=tracking_uri,
+            experiment_name=experiment_name,
+            metric_name='mase',
+            verbose=False
+        )
+        if not results:
+            return None
+        
+        weighted_sum = 0.0
+        total_ts_count = 0
+        
+        # Parallelize fetching of timeseries counts for all results in this experiment
+        with ThreadPoolExecutor(max_workers=10) as executor:
+            future_to_metric = {
+                executor.submit(get_cached_ts_count, tracking_uri, r["eval_run_id"]): r 
+                for r in results if not math.isnan(r["metric_value"])
+            }
+            
+            for future in as_completed(future_to_metric):
+                r = future_to_metric[future]
+                try:
+                    ts_count = future.result()
+                    if ts_count > 0:
+                        weighted_sum += r["metric_value"] * ts_count
+                        total_ts_count += ts_count
+                except Exception as e:
+                    print(f"Error fetching ts_count for {r['eval_run_id']}: {e}")
+        
+        if total_ts_count > 0:
+            return weighted_sum / total_ts_count
+        return None
+    except Exception as e:
+        print(f"Error calculating total MASE for {experiment_name}: {e}")
+        return None
+
+def process_global_experiment(tracking_uri: str, exp_name: str):
+    """Worker function to process a single global experiment."""
+    try:
+        mase_results = get_eval_metrics(tracking_uri, exp_name, 'mase', verbose=False)
+        if not mase_results: return None
+
+        parent_run_stats = {}
+        # Fetch counts in parallel for this experiment's runs
+        with ThreadPoolExecutor(max_workers=10) as executor:
+            future_to_run = {
+                executor.submit(get_cached_ts_count, tracking_uri, r["eval_run_id"]): r 
+                for r in mase_results if not math.isnan(r["metric_value"])
+            }
+            for future in as_completed(future_to_run):
+                r = future_to_run[future]
+                ts_count = future.result()
+                if ts_count > 0:
+                    p_name = r["parent_run_name"]
+                    if p_name not in parent_run_stats:
+                        parent_run_stats[p_name] = {'weighted_sum': 0.0, 'total_ts_count': 0}
+                    parent_run_stats[p_name]['weighted_sum'] += r["metric_value"] * ts_count
+                    parent_run_stats[p_name]['total_ts_count'] += ts_count
+
+        best_parent_run = None
+        best_mase = float('inf')
+        for p_name, stats in parent_run_stats.items():
+            if stats['total_ts_count'] > 0:
+                avg_mase = stats['weighted_sum'] / stats['total_ts_count']
+                if avg_mase < best_mase:
+                    best_mase = avg_mase
+                    best_parent_run = p_name
+        
+        if best_parent_run:
+            row = {'experiment': exp_name, 'parent_run': best_parent_run, 'mase': best_mase}
+            # Parallelize fetching other metrics for the winner
+            def get_stat(m_name):
+                other_r = get_eval_metrics(tracking_uri, exp_name, m_name, parent_filter=best_parent_run, verbose=False)
+                w_s, t_c = 0.0, 0
+                for r in other_r:
+                    if math.isnan(r["metric_value"]): continue
+                    cnt = get_cached_ts_count(tracking_uri, r["eval_run_id"])
+                    if cnt > 0:
+                        w_s += r["metric_value"] * cnt
+                        t_c += cnt
+                return m_name, (w_s / t_c if t_c > 0 else None)
+
+            with ThreadPoolExecutor(max_workers=3) as executor:
+                stats_futures = [executor.submit(get_stat, m) for m in ['mae', 'mape', 'rmse']]
+                for f in as_completed(stats_futures):
+                    m_name, val = f.result()
+                    row[m_name] = val
+            return row
+    except Exception as e:
+        print(f"Error processing {exp_name}: {e}")
+    return None
+
 @app.route('/api/leaderboard', methods=['GET'])
 def get_leaderboard():
     """
-    Fetch the best performing model (Parent Run) from each of the specific GEF experiments.
-    Experiments: GEF_MLP, GEF_NBEATS, GEF_LSTM, GEF_LightGBM
-    Ranking Metric: MASE
+    Optimized Leaderboard API using parallel processing and caching.
+    1. Global: Best Parent Run from specific core GEF experiments.
+    2. Architecture-Specific: Total weighted MASE for matching ARCH_*.
     """
     try:
         tracking_uri = request.args.get('tracking_uri', DEFAULT_TRACKING_URI)
-        target_experiments = ['GEF_MLP', 'GEF_NBEATS', 'GEF_LSTM', 'GEF_LightGBM']
+        mlflow.set_tracking_uri(tracking_uri)
+        client = MlflowClient()
         
-        leaderboard = []
-        
-        for exp_name in target_experiments:
-            try:
-                # 1. Fetch MASE to determine the winner
-                mase_results = get_eval_metrics(
-                    tracking_uri=tracking_uri,
-                    experiment_name=exp_name,
-                    metric_name='mase',
-                    verbose=False
-                )
-                
-                if not mase_results:
-                    continue
+        # Clear the cache for each request to ensure fresh data, but reuse within the request
+        ts_count_cache.clear()
 
-                # Agregate by Parent Run
-                parent_run_stats = {}
-                
-                for r in mase_results:
-                    val = r["metric_value"]
-                    if math.isnan(val):
-                        continue
-                        
-                    p_name = r["parent_run_name"]
-                    p_id = r["parent_run_id"]
-                    
-                    if p_name not in parent_run_stats:
-                        parent_run_stats[p_name] = {
-                            'parent_run_id': p_id,
-                            'weighted_sum': 0.0,
-                            'total_ts_count': 0
-                        }
-                    
-                    # We need TS count for weighting
-                    ts_count = get_timeseries_count(tracking_uri, r["eval_run_id"])
-                    
-                    if ts_count > 0:
-                        parent_run_stats[p_name]['weighted_sum'] += val * ts_count
-                        parent_run_stats[p_name]['total_ts_count'] += ts_count
-
-                # Find best Parent Run (Lowest MASE)
-                best_parent_run = None
-                best_mase = float('inf')
-                
-                for p_name, stats in parent_run_stats.items():
-                    if stats['total_ts_count'] > 0:
-                        avg_mase = stats['weighted_sum'] / stats['total_ts_count']
-                        if avg_mase < best_mase:
-                            best_mase = avg_mase
-                            best_parent_run = p_name
-                
-                if best_parent_run:
-                    # Store what we have
-                    row = {
-                        'experiment': exp_name,
-                        'parent_run': best_parent_run,
-                        'mase': best_mase,
-                        'mae': None,
-                        'mape': None,
-                        'rmse': None
-                    }
-                    
-                    # Helper to get other metrics for this specific parent run
-                    for m in ['mae', 'mape', 'rmse']:
-                         other_results = get_eval_metrics(
-                            tracking_uri=tracking_uri,
-                            experiment_name=exp_name,
-                            metric_name=m,
-                            parent_filter=best_parent_run, # Exact match filter
-                            verbose=False
-                        )
-                         
-                         w_sum = 0
-                         tot_count = 0
-                         for r in other_results:
-                             val = r["metric_value"]
-                             if math.isnan(val): continue
-                             ts_c = get_timeseries_count(tracking_uri, r["eval_run_id"])
-                             if ts_c > 0:
-                                 w_sum += val * ts_c
-                                 tot_count += ts_c
-                        
-                         if tot_count > 0:
-                             row[m] = w_sum / tot_count
-                    
-                    leaderboard.append(row)
-
-            except Exception as e:
-                print(f"Error processing leaderboard for {exp_name}: {e}")
-                continue
+        # --- 1. Global Leaderboard (Parallelized) ---
+        target_global_experiments = ['GEF_MLP', 'GEF_NBEATS', 'GEF_LSTM', 'GEF_LightGBM']
+        global_leaderboard = []
         
-        # Sort leaderboard by MASE ascending
-        leaderboard.sort(key=lambda x: x['mase'])
+        with ThreadPoolExecutor(max_workers=len(target_global_experiments)) as executor:
+            futures = [executor.submit(process_global_experiment, tracking_uri, exp) for exp in target_global_experiments]
+            for future in as_completed(futures):
+                res = future.result()
+                if res: global_leaderboard.append(res)
+
+        global_leaderboard.sort(key=lambda x: x['mase'] if x.get('mase') is not None else float('inf'))
+
+        # --- 2. Architecture Leaderboards (Parallelized) ---
+        arch_keywords = ['MLP', 'NBEATS', 'LSTM', 'LightGBM']
+        all_experiments = client.search_experiments()
+        architectures_data = {k: [] for k in arch_keywords}
         
+        # Collect relevant experiments
+        relevant_exps = []
+        for exp in all_experiments:
+            if exp.lifecycle_stage != 'active': continue
+            exp_name_upper = exp.name.upper()
+            for keyword in arch_keywords:
+                if keyword in exp_name_upper:
+                    relevant_exps.append((exp.name, keyword))
+                    break
+
+        # Process all relevant experiments in parallel
+        with ThreadPoolExecutor(max_workers=10) as executor:
+            future_to_exp = {
+                executor.submit(get_experiment_total_mase, tracking_uri, exp_name): (exp_name, keyword)
+                for exp_name, keyword in relevant_exps
+            }
+            for future in as_completed(future_to_exp):
+                exp_name, keyword = future_to_exp[future]
+                mase = future.result()
+                if mase is not None:
+                    architectures_data[keyword].append({'experiment': exp_name, 'mase': mase})
+        
+        for keyword in arch_keywords:
+            architectures_data[keyword].sort(key=lambda x: x['mase'])
+
         return jsonify({
             'success': True,
-            'leaderboard': leaderboard
+            'global': global_leaderboard,
+            'architectures': architectures_data
         })
         
     except Exception as e:
-        return jsonify({
-            'success': False,
-            'error': str(e)
-        }), 500
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
 
 def fetch_csv_from_mlflow(client: MlflowClient, run_id: str) -> Optional[pd.DataFrame]:
     """

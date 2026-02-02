@@ -941,6 +941,14 @@ async function fetchLeaderboard() {
         `;
     }
 
+    // Also show spinners in mini leaderboards
+    ['mlp', 'nbeats', 'lstm', 'lgbm'].forEach(key => {
+        const container = document.getElementById(`${key}Leaderboard`);
+        if (container) {
+            container.innerHTML = '<div class="spinner" style="width: 30px; height: 30px; margin: 2rem auto;"></div>';
+        }
+    });
+
     try {
         const response = await fetch(`${API_BASE_URL}/leaderboard`);
         const data = await response.json();
@@ -949,39 +957,74 @@ async function fetchLeaderboard() {
             throw new Error(data.error);
         }
 
-        const leaderboard = data.leaderboard;
-        if (leaderboard.length === 0) {
-            leaderboardBody.innerHTML = '<tr><td colspan="7" style="text-align: center;">No data found for GEF experiments.</td></tr>';
-            return;
+        // --- Render Global Leaderboard ---
+        const globalData = data.global;
+        if (!globalData || globalData.length === 0) {
+            leaderboardBody.innerHTML = '<tr><td colspan="7" style="text-align: center;">No data found for core GEF experiments.</td></tr>';
+        } else {
+            leaderboardBody.innerHTML = '';
+            globalData.forEach((row, index) => {
+                const tr = document.createElement('tr');
+                if (index === 0) {
+                    tr.style.background = 'rgba(255, 215, 0, 0.1)';
+                    tr.style.fontWeight = 'bold';
+                }
+                tr.innerHTML = `
+                    <td>${index === 0 ? '🏆' : index + 1}</td>
+                    <td>${row.experiment}</td>
+                    <td title="${row.parent_run}">${row.parent_run}</td>
+                    <td>${(row.mase !== null ? row.mase.toFixed(4) : 'N/A')}</td>
+                    <td>${(row.mae !== null ? row.mae.toFixed(4) : 'N/A')}</td>
+                    <td>${(row.mape !== null ? row.mape.toFixed(4) : 'N/A')}</td>
+                    <td>${(row.rmse !== null ? row.rmse.toFixed(4) : 'N/A')}</td>
+                `;
+                leaderboardBody.appendChild(tr);
+            });
         }
 
-        // Clear the spinner row before rendering data
-        leaderboardBody.innerHTML = '';
-
-        leaderboard.forEach((row, index) => {
-            const tr = document.createElement('tr');
-
-            // Highlight winner
-            if (index === 0) {
-                tr.style.background = 'rgba(255, 215, 0, 0.1)';
-                tr.style.fontWeight = 'bold';
-            }
-
-            tr.innerHTML = `
-                <td>${index === 0 ? '🏆' : index + 1}</td>
-                <td>${row.experiment}</td>
-                <td title="${row.parent_run}">${row.parent_run}</td>
-                <td>${(row.mase !== null ? row.mase.toFixed(4) : 'N/A')}</td>
-                <td>${(row.mae !== null ? row.mae.toFixed(4) : 'N/A')}</td>
-                <td>${(row.mape !== null ? row.mape.toFixed(4) : 'N/A')}</td>
-                <td>${(row.rmse !== null ? row.rmse.toFixed(4) : 'N/A')}</td>
-            `;
-            leaderboardBody.appendChild(tr);
-        });
+        // --- Render Architectural Leaderboards ---
+        const archMap = data.architectures;
+        if (archMap) {
+            renderMiniLeaderboard('mlpLeaderboard', archMap['MLP']);
+            renderMiniLeaderboard('nbeatsLeaderboard', archMap['NBEATS']);
+            renderMiniLeaderboard('lstmLeaderboard', archMap['LSTM']);
+            renderMiniLeaderboard('lgbmLeaderboard', archMap['LightGBM']);
+        }
 
     } catch (error) {
         showError(error.message);
     } finally {
         hideLoading();
     }
+}
+
+function renderMiniLeaderboard(containerId, models) {
+    const container = document.getElementById(containerId);
+    if (!container) return;
+
+    if (!models || models.length === 0) {
+        container.innerHTML = '<p style="text-align: center; color: var(--color-text-secondary); padding: 1.5rem; font-size: 0.9rem;">No experiments found for this architecture.</p>';
+        return;
+    }
+
+    const table = document.createElement('table');
+    table.className = 'compact-table';
+    table.innerHTML = `
+        <thead>
+            <tr>
+                <th>Experiment</th>
+                <th>MASE</th>
+            </tr>
+        </thead>
+        <tbody>
+            ${models.map(m => `
+                <tr>
+                    <td title="${m.experiment}">${m.experiment}</td>
+                    <td>${m.mase.toFixed(4)}</td>
+                </tr>
+            `).join('')}
+        </tbody>
+    `;
+    container.innerHTML = '';
+    container.appendChild(table);
 }

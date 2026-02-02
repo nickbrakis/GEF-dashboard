@@ -882,3 +882,57 @@ body::before {
 .custom-table tr:hover {
     background: rgba(255, 255, 255, 0.02);
 }
+/* ===== Leaderboard Grid (2x2) ===== */
+.leaderboard-grid {
+    display: grid;
+    grid-template-columns: repeat(2, 1fr);
+    gap: var(--spacing-lg);
+    margin-top: var(--spacing-lg);
+}
+
+.mini-leaderboard {
+    padding: var(--spacing-md);
+}
+
+.mini-leaderboard .card-title {
+    font-size: 1.1rem;
+    margin-bottom: var(--spacing-sm);
+    text-align: center;
+}
+
+.mini-table-container {
+    overflow-x: auto;
+}
+
+.compact-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 0.875rem;
+}
+
+.compact-table th,
+.compact-table td {
+    padding: var(--spacing-xs) var(--spacing-sm);
+    text-align: left;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+}
+
+.compact-table th {
+    color: var(--color-text-secondary);
+    text-transform: uppercase;
+    font-weight: 600;
+    font-size: 0.75rem;
+}
+
+.compact-table td:first-child {
+    max-width: 150px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+@media (max-width: 992px) {
+    .leaderboard-grid {
+        grid-template-columns: 1fr;
+    }
+}
