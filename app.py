@@ -5,6 +5,7 @@ from mlflow.tracking import MlflowClient
 import math
 from typing import List, Dict, Optional
 from mlflow_metrics import get_eval_metrics, get_timeseries_count
+from concurrent.futures import ThreadPoolExecutor, as_completed
 import boto3
 from botocore import UNSIGNED
 from botocore.client import Config
@@ -34,6 +35,71 @@ MINIO_BUCKET = "mlflow-bucket"
 # Credentials from environment variables (optional, will try anonymous access first)
 MINIO_ACCESS_KEY = os.environ.get('MINIO_ACCESS_KEY', '')
 MINIO_SECRET_KEY = os.environ.get('MINIO_SECRET_KEY', '')
+
+# Leaderboard caching (simple in-memory cache)
+LEADERBOARD_CACHE_TTL_SECONDS = int(os.environ.get("LEADERBOARD_CACHE_TTL_SECONDS", "900"))
+_leaderboard_cache = {"timestamp": None, "payload": None, "tracking_uri": None}
+
+
+def get_timeseries_counts(tracking_uri: str, run_ids: List[str], max_workers: int = 12) -> Dict[str, int]:
+    """
+    Fetch timeseries counts for a list of run_ids in parallel.
+    Uses cached get_timeseries_count to avoid repeated API calls.
+    """
+    unique_run_ids = {run_id for run_id in run_ids if run_id}
+    if not unique_run_ids:
+        return {}
+
+    counts: Dict[str, int] = {}
+    worker_count = min(max_workers, len(unique_run_ids))
+    with ThreadPoolExecutor(max_workers=worker_count) as executor:
+        futures = {
+            executor.submit(get_timeseries_count, tracking_uri, run_id): run_id
+            for run_id in unique_run_ids
+        }
+        for future in as_completed(futures):
+            run_id = futures[future]
+            try:
+                counts[run_id] = future.result()
+            except Exception:
+                counts[run_id] = 0
+    return counts
+
+
+def compute_weighted_metric_stats(results: List[Dict], counts: Dict[str, int]) -> Dict[str, Optional[float]]:
+    """
+    Compute weighted statistics from metric results using pre-fetched counts.
+    """
+    metric_values = []
+    weighted_sum = 0.0
+    total_ts_count = 0
+
+    for r in results:
+        val = r["metric_value"]
+        if math.isnan(val):
+            continue
+        ts_count = counts.get(r["eval_run_id"], 0)
+        if ts_count > 0:
+            metric_values.append(val)
+            weighted_sum += val * ts_count
+            total_ts_count += ts_count
+
+    if metric_values and total_ts_count > 0:
+        return {
+            "weighted_average": weighted_sum / total_ts_count,
+            "unweighted_average": sum(metric_values) / len(metric_values),
+            "min": min(metric_values),
+            "max": max(metric_values),
+            "total_timeseries": total_ts_count,
+        }
+
+    return {
+        "weighted_average": None,
+        "unweighted_average": None,
+        "min": None,
+        "max": None,
+        "total_timeseries": 0,
+    }
 
 @app.route('/')
 def index():
@@ -269,22 +335,11 @@ def get_experiment_total_mase(tracking_uri: str, experiment_name: str) -> Option
         )
         if not results:
             return None
-        
-        weighted_sum = 0.0
-        total_ts_count = 0
-        
-        for r in results:
-            val = r["metric_value"]
-            if math.isnan(val): continue
-            
-            ts_count = get_timeseries_count(tracking_uri, r["eval_run_id"])
-            if ts_count > 0:
-                weighted_sum += val * ts_count
-                total_ts_count += ts_count
-        
-        if total_ts_count > 0:
-            return weighted_sum / total_ts_count
-        return None
+
+        run_ids = [r["eval_run_id"] for r in results if not math.isnan(r["metric_value"])]
+        counts = get_timeseries_counts(tracking_uri, run_ids)
+        stats = compute_weighted_metric_stats(results, counts)
+        return stats["weighted_average"]
     except Exception as e:
         print(f"Error calculating total MASE for {experiment_name}: {e}")
         return None
@@ -297,6 +352,17 @@ def get_leaderboard():
     """
     try:
         tracking_uri = request.args.get('tracking_uri', DEFAULT_TRACKING_URI)
+        cached_payload = _leaderboard_cache.get("payload")
+        cached_timestamp = _leaderboard_cache.get("timestamp")
+        cached_uri = _leaderboard_cache.get("tracking_uri")
+        if (
+            cached_payload is not None
+            and cached_timestamp is not None
+            and cached_uri == tracking_uri
+            and (pd.Timestamp.utcnow().timestamp() - cached_timestamp) < LEADERBOARD_CACHE_TTL_SECONDS
+        ):
+            return jsonify(cached_payload)
+
         mlflow.set_tracking_uri(tracking_uri)
         client = MlflowClient()
         
@@ -309,6 +375,9 @@ def get_leaderboard():
                 mase_results = get_eval_metrics(tracking_uri, exp_name, 'mase', verbose=False)
                 if not mase_results: continue
 
+                mase_run_ids = [r["eval_run_id"] for r in mase_results if not math.isnan(r["metric_value"])]
+                mase_counts = get_timeseries_counts(tracking_uri, mase_run_ids)
+
                 parent_run_stats = {}
                 for r in mase_results:
                     val = r["metric_value"]
@@ -317,7 +386,7 @@ def get_leaderboard():
                     p_id = r["parent_run_id"]
                     if p_name not in parent_run_stats:
                         parent_run_stats[p_name] = {'weighted_sum': 0.0, 'total_ts_count': 0}
-                    ts_count = get_timeseries_count(tracking_uri, r["eval_run_id"])
+                    ts_count = mase_counts.get(r["eval_run_id"], 0)
                     if ts_count > 0:
                         parent_run_stats[p_name]['weighted_sum'] += val * ts_count
                         parent_run_stats[p_name]['total_ts_count'] += ts_count
@@ -336,15 +405,10 @@ def get_leaderboard():
                     # Get other metrics for the winner
                     for m in ['mae', 'mape', 'rmse']:
                          other_results = get_eval_metrics(tracking_uri, exp_name, m, parent_filter=best_parent_run, verbose=False)
-                         w_sum, tot_count = 0, 0
-                         for r in other_results:
-                             val = r["metric_value"]
-                             if math.isnan(val): continue
-                             ts_c = get_timeseries_count(tracking_uri, r["eval_run_id"])
-                             if ts_c > 0:
-                                 w_sum += val * ts_c
-                                 tot_count += ts_c
-                         row[m] = w_sum / tot_count if tot_count > 0 else None
+                         other_run_ids = [r["eval_run_id"] for r in other_results if not math.isnan(r["metric_value"])]
+                         other_counts = get_timeseries_counts(tracking_uri, other_run_ids)
+                         stats = compute_weighted_metric_stats(other_results, other_counts)
+                         row[m] = stats["weighted_average"]
                     global_leaderboard.append(row)
             except Exception as e:
                 print(f"Error processing global leaderboard for {exp_name}: {e}")
@@ -374,11 +438,15 @@ def get_leaderboard():
         for keyword in arch_keywords:
             architectures_data[keyword].sort(key=lambda x: x['mase'])
 
-        return jsonify({
+        payload = {
             'success': True,
             'global': global_leaderboard,
             'architectures': architectures_data
-        })
+        }
+        _leaderboard_cache["timestamp"] = pd.Timestamp.utcnow().timestamp()
+        _leaderboard_cache["payload"] = payload
+        _leaderboard_cache["tracking_uri"] = tracking_uri
+        return jsonify(payload)
         
     except Exception as e:
         return jsonify({'success': False, 'error': str(e)}), 500

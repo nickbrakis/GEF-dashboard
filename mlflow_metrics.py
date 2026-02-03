@@ -9,6 +9,9 @@ import argparse
 import csv
 import math
 import requests
+from requests.exceptions import RequestException
+
+_timeseries_count_cache: Dict[tuple, int] = {}
 
 def get_eval_metrics(
     tracking_uri: str,
@@ -99,6 +102,11 @@ def get_timeseries_count(tracking_uri: str, run_id: str) -> int:
     Get the number of timeseries in a run by counting directories in 'eval_results'
     using the MLflow REST API.
     """
+    cache_key = (tracking_uri, run_id)
+    cached_value = _timeseries_count_cache.get(cache_key)
+    if cached_value is not None:
+        return cached_value
+
     try:
         # Construct API URL
         # We need to handle potential trailing slashes in tracking_uri
@@ -109,20 +117,32 @@ def get_timeseries_count(tracking_uri: str, run_id: str) -> int:
             "run_id": run_id,
             "path": "eval_results"
         }
-        
-        response = requests.get(url, params=params, timeout=10)
-        
-        if response.status_code == 200:
-            data = response.json()
-            files = data.get("files", [])
-            # Count only directories
-            # MLflow API returns 'is_dir' boolean
-            directories = [f for f in files if f.get("is_dir")]
-            return len(directories)
-        else:
-            # If path doesn't exist or other error, return 0 or handle accordingly
-            return 0
-            
+
+        timeouts = [(5, 20), (5, 30), (10, 45)]
+        last_error = None
+        for timeout in timeouts:
+            try:
+                response = requests.get(url, params=params, timeout=timeout)
+                if response.status_code == 200:
+                    data = response.json()
+                    files = data.get("files", [])
+                    # Count only directories
+                    # MLflow API returns 'is_dir' boolean
+                    directories = [f for f in files if f.get("is_dir")]
+                    count = len(directories)
+                    _timeseries_count_cache[cache_key] = count
+                    return count
+                # If path doesn't exist or other error, return 0 or handle accordingly
+                if response.status_code in {404, 403}:
+                    _timeseries_count_cache[cache_key] = 0
+                    return 0
+                last_error = f"status {response.status_code}"
+            except RequestException as e:
+                last_error = e
+                continue
+        print(f"  ⚠️  Error counting timeseries for run {run_id}: {last_error}")
+        return 0
+
     except Exception as e:
         print(f"  ⚠️  Error counting timeseries for run {run_id}: {e}")
         return 0

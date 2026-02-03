@@ -40,6 +40,7 @@ const downloadCsvButton = document.getElementById('downloadCsvButton');
 const compareButton = document.getElementById('compareButton');
 const experimentSelect = document.getElementById('experimentSelect');
 const loadExperimentsBtn = document.getElementById('loadExperimentsBtn');
+const compareParentFilterInput = document.getElementById('compareParentFilter');
 
 
 
@@ -520,7 +521,9 @@ async function compareExperiments() {
 
     // Get selected metric
     const selectedMetric = document.querySelector('input[name="compareMetric"]:checked').value;
-    const parentFilter = compareParentFilterInput.value.trim() || null;
+    const parentFilter = compareParentFilterInput
+        ? (compareParentFilterInput.value.trim() || null)
+        : null;
 
     // Show loading state
     showLoading();
