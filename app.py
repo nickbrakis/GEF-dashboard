@@ -4,7 +4,6 @@ import mlflow
 from mlflow.tracking import MlflowClient
 import math
 from typing import List, Dict, Optional
-from mlflow_metrics import get_eval_metrics, get_timeseries_count
 from concurrent.futures import ThreadPoolExecutor, as_completed
 import boto3
 from botocore import UNSIGNED
@@ -19,6 +18,12 @@ import matplotlib
 matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 import seaborn as sns
+import requests
+from requests.exceptions import RequestException
+import json
+import time
+import requests
+from openai import OpenAI
 
 # Load environment variables from .env file
 load_dotenv()
@@ -27,7 +32,26 @@ app = Flask(__name__, static_folder='static')
 CORS(app)
 
 # Default MLflow tracking URI
-DEFAULT_TRACKING_URI = "https://mlflow.gpu.epu.ntua.gr"
+DEFAULT_TRACKING_URI = os.environ.get("MLFLOW_TRACKING_URI", "https://mlflow.gpu.epu.ntua.gr")
+OPENAI_MODEL = os.environ.get("OPENAI_MODEL", "gpt-4.1-mini")
+OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY", "")
+MCP_BASE_URL = os.environ.get("MCP_BASE_URL", "http://127.0.0.1:7001")
+MCP_TIMEOUT_SECONDS = int(os.environ.get("MCP_TIMEOUT_SECONDS", "45"))
+_mcp_next_id = 1
+
+
+def _mcp_request(method: str, params: Dict, timeout_seconds: int = MCP_TIMEOUT_SECONDS) -> Dict:
+    global _mcp_next_id
+    req_id = _mcp_next_id
+    _mcp_next_id += 1
+    payload = {"jsonrpc": "2.0", "id": req_id, "method": method, "params": params}
+    response = requests.post(
+        f"{MCP_BASE_URL}/mcp",
+        json=payload,
+        timeout=timeout_seconds,
+    )
+    response.raise_for_status()
+    return response.json()
 
 # MinIO/S3 Configuration
 MINIO_ENDPOINT = "https://api.minio.gpu.epu.ntua.gr"
@@ -39,6 +63,122 @@ MINIO_SECRET_KEY = os.environ.get('MINIO_SECRET_KEY', '')
 # Leaderboard caching (simple in-memory cache)
 LEADERBOARD_CACHE_TTL_SECONDS = int(os.environ.get("LEADERBOARD_CACHE_TTL_SECONDS", "900"))
 _leaderboard_cache = {"timestamp": None, "payload": None, "tracking_uri": None}
+
+_timeseries_count_cache: Dict[tuple, int] = {}
+
+
+def get_eval_metrics(
+    tracking_uri: str,
+    experiment_name: str,
+    metric_name: str = "mase",
+    parent_filter: Optional[str] = None,
+    verbose: bool = False,
+) -> List[Dict]:
+    """
+    Retrieve metrics from eval subruns of an MLflow experiment.
+    """
+    mlflow.set_tracking_uri(tracking_uri)
+    client = MlflowClient()
+
+    experiment = client.get_experiment_by_name(experiment_name)
+    if not experiment:
+        raise ValueError(f"Experiment '{experiment_name}' not found.")
+    experiment_id = experiment.experiment_id
+
+    if verbose:
+        print(f"Found experiment: {experiment_name} (ID: {experiment_id})")
+
+    parent_runs = client.search_runs(
+        experiment_ids=[experiment_id],
+        filter_string="",
+        run_view_type=mlflow.entities.ViewType.ACTIVE_ONLY,
+        max_results=1000,
+    )
+
+    if parent_filter:
+        parent_runs = [r for r in parent_runs if r.data.tags.get("mlflow.runName") == parent_filter]
+
+    if verbose:
+        print(f"Found {len(parent_runs)} runs")
+
+    results = []
+    for parent_run in parent_runs:
+        parent_run_name = parent_run.data.tags.get("mlflow.runName", "Unknown")
+
+        child_runs = client.search_runs(
+            experiment_ids=[experiment_id],
+            filter_string=f"tags.mlflow.parentRunId = '{parent_run.info.run_id}'",
+            run_view_type=mlflow.entities.ViewType.ACTIVE_ONLY,
+            max_results=1000,
+        )
+
+        for child_run in child_runs:
+            child_run_name = child_run.data.tags.get("mlflow.runName", "")
+
+            if "eval" in child_run_name.lower():
+                metrics = child_run.data.metrics
+                if metric_name in metrics:
+                    result = {
+                        "parent_run_id": parent_run.info.run_id,
+                        "parent_run_name": parent_run_name,
+                        "eval_run_id": child_run.info.run_id,
+                        "eval_run_name": child_run_name,
+                        "metric_name": metric_name,
+                        "metric_value": metrics[metric_name],
+                    }
+                    results.append(result)
+
+                    if verbose:
+                        print(f"  Parent: {parent_run_name}")
+                        print(f"    Eval: {child_run_name}")
+                        print(f"    {metric_name}: {metrics[metric_name]}")
+    return results
+
+
+def get_timeseries_count(tracking_uri: str, run_id: str) -> int:
+    """
+    Get the number of timeseries in a run by counting directories in 'eval_results'
+    using the MLflow REST API.
+    """
+    cache_key = (tracking_uri, run_id)
+    cached_value = _timeseries_count_cache.get(cache_key)
+    if cached_value is not None:
+        return cached_value
+
+    try:
+        base_uri = tracking_uri.rstrip('/')
+        url = f"{base_uri}/api/2.0/mlflow/artifacts/list"
+
+        params = {
+            "run_id": run_id,
+            "path": "eval_results",
+        }
+
+        timeouts = [(5, 20), (5, 30), (10, 45)]
+        last_error = None
+        for timeout in timeouts:
+            try:
+                response = requests.get(url, params=params, timeout=timeout)
+                if response.status_code == 200:
+                    data = response.json()
+                    files = data.get("files", [])
+                    directories = [f for f in files if f.get("is_dir")]
+                    count = len(directories)
+                    _timeseries_count_cache[cache_key] = count
+                    return count
+                if response.status_code in {404, 403}:
+                    _timeseries_count_cache[cache_key] = 0
+                    return 0
+                last_error = f"status {response.status_code}"
+            except RequestException as e:
+                last_error = e
+                continue
+        print(f"  ⚠️  Error counting timeseries for run {run_id}: {last_error}")
+        return 0
+
+    except Exception as e:
+        print(f"  ⚠️  Error counting timeseries for run {run_id}: {e}")
+        return 0
 
 
 def get_timeseries_counts(tracking_uri: str, run_ids: List[str], max_workers: int = 12) -> Dict[str, int]:
@@ -106,6 +246,133 @@ def index():
     """Serve the main web UI."""
     return send_from_directory('static', 'index.html')
 
+
+def _mcp_call_tool(tool_name: str, arguments: Dict, timeout_seconds: int = 45) -> Dict:
+    if not arguments.get("tracking_uri"):
+        arguments["tracking_uri"] = DEFAULT_TRACKING_URI
+
+    tool_map = {
+        "mlflow_list_experiments": "mlflow.list_experiments",
+        "mlflow_list_runs": "mlflow.list_runs",
+        "mlflow_get_run": "mlflow.get_run",
+    }
+    mcp_tool = tool_map.get(tool_name)
+    if not mcp_tool:
+        raise ValueError(f"Unknown tool: {tool_name}")
+
+    tool_response = _mcp_request(
+        "tools/call",
+        {"name": mcp_tool, "arguments": arguments},
+        timeout_seconds=timeout_seconds,
+    )
+
+    if not tool_response:
+        raise RuntimeError("No tool response received from MCP server")
+
+    if "error" in tool_response:
+        detail = tool_response["error"].get("data", {}).get("detail")
+        message = tool_response["error"].get("message", "MCP tool error")
+        if detail:
+            message = f"{message}: {detail}"
+        raise RuntimeError(message)
+
+    content = tool_response.get("result", {}).get("content", [])
+    if not content:
+        return {}
+    text_payload = content[0].get("text", "{}")
+    return json.loads(text_payload)
+
+
+def _chat_llm(message: str, tracking_uri: str) -> str:
+    if not OPENAI_API_KEY:
+        raise ValueError("OPENAI_API_KEY is not set")
+
+    client = OpenAI(api_key=OPENAI_API_KEY)
+    tools = [
+        {
+            "type": "function",
+            "name": "mlflow_list_experiments",
+            "description": "List active MLflow experiments.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "tracking_uri": {"type": "string"},
+                },
+            },
+        },
+        {
+            "type": "function",
+            "name": "mlflow_list_runs",
+            "description": "List runs for an experiment by name or id.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "tracking_uri": {"type": "string"},
+                    "experiment_name": {"type": "string"},
+                    "experiment_id": {"type": "string"},
+                    "max_results": {"type": "integer", "default": 50},
+                    "filter_string": {"type": "string"},
+                    "order_by": {"type": "array", "items": {"type": "string"}},
+                },
+            },
+        },
+        {
+            "type": "function",
+            "name": "mlflow_get_run",
+            "description": "Get details for a run.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "tracking_uri": {"type": "string"},
+                    "run_id": {"type": "string"},
+                },
+                "required": ["run_id"],
+            },
+        },
+    ]
+
+    input_list = [
+        {
+            "role": "system",
+            "content": (
+                "You are an MLflow assistant. Use tools to fetch data. "
+                "Summarize results clearly in natural language. "
+                "Prefer concise answers and ask for clarification when needed."
+            ),
+        },
+        {"role": "user", "content": message},
+    ]
+
+    response = client.responses.create(
+        model=OPENAI_MODEL,
+        tools=tools,
+        input=input_list,
+    )
+    input_list += response.output
+
+    tool_calls = [item for item in response.output if item.type == "function_call"]
+    if tool_calls:
+        for item in tool_calls:
+            args = json.loads(item.arguments or "{}")
+            if not args.get("tracking_uri"):
+                args["tracking_uri"] = tracking_uri
+            tool_output = _mcp_call_tool(item.name, args)
+            input_list.append(
+                {
+                    "type": "function_call_output",
+                    "call_id": item.call_id,
+                    "output": json.dumps(tool_output),
+                }
+            )
+
+        response = client.responses.create(
+            model=OPENAI_MODEL,
+            tools=tools,
+            input=input_list,
+        )
+
+    return response.output_text
+
 @app.route('/api/experiments', methods=['GET'])
 def list_experiments():
     """List all available experiments from MLflow."""
@@ -134,6 +401,30 @@ def list_experiments():
             'success': False,
             'error': str(e)
         }), 500
+
+@app.route('/api/chat', methods=['POST'])
+def chat_query():
+    """
+    Minimal chat endpoint for natural language queries about MLflow experiments.
+    """
+    try:
+        data = request.get_json()
+        message = (data.get('message') or '').strip()
+        tracking_uri = data.get('tracking_uri', DEFAULT_TRACKING_URI)
+
+        if not message:
+            return jsonify({'success': False, 'error': 'message is required'}), 400
+
+        if not OPENAI_API_KEY:
+            return jsonify({
+                'success': False,
+                'error': 'OPENAI_API_KEY is not set on the server'
+            }), 500
+
+        response_text = _chat_llm(message, tracking_uri)
+        return jsonify({'success': True, 'type': 'llm', 'message': response_text})
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
 
 @app.route('/api/metrics', methods=['POST'])
 def get_metrics():
@@ -367,7 +658,7 @@ def get_leaderboard():
         client = MlflowClient()
         
         # --- 1. Global Leaderboard (Best Parent Run Logic) ---
-        target_global_experiments = ['GEF_MLP', 'GEF_NBEATS', 'GEF_LSTM', 'GEF_LightGBM']
+        target_global_experiments = ['GEF_MLP', 'GEF_NBEATS', 'GEF_LSTM', 'GEF_LightGBM', 'GEF_TCN']
         global_leaderboard = []
         
         for exp_name in target_global_experiments:

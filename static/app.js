@@ -58,10 +58,12 @@ const singleModeBtn = document.getElementById('singleModeBtn');
 const compareModeBtn = document.getElementById('compareModeBtn');
 const plotCompareModeBtn = document.getElementById('plotCompareModeBtn');
 const leaderboardModeBtn = document.getElementById('leaderboardModeBtn'); // New
+const chatModeBtn = document.getElementById('chatModeBtn');
 const singleMode = document.getElementById('singleMode');
 const compareMode = document.getElementById('compareMode');
 const plotCompareMode = document.getElementById('plotCompareMode');
 const leaderboardMode = document.getElementById('leaderboardMode'); // New
+const chatMode = document.getElementById('chatMode');
 const leaderboardBody = document.getElementById('leaderboardBody'); // New
 
 // DOM Elements - Shared
@@ -78,6 +80,11 @@ const csvPreviewSection = document.getElementById('csvPreviewSection');
 const csvPreviewTable = document.getElementById('csvPreviewTable');
 const closePreviewBtn = document.getElementById('closePreviewBtn');
 
+// DOM Elements - Chat Mode
+const chatMessages = document.getElementById('chatMessages');
+const chatInput = document.getElementById('chatInput');
+const chatSendBtn = document.getElementById('chatSendBtn');
+const chatExampleButtons = document.querySelectorAll('.chat-example');
 
 // Event Listeners - Single Mode
 fetchButton.addEventListener('click', fetchMetrics);
@@ -104,11 +111,32 @@ if (generatePlotBtn) {
 
 // Event Listeners - Leaderboard Mode
 leaderboardModeBtn.addEventListener('click', () => switchMode('leaderboard'));
+chatModeBtn.addEventListener('click', () => switchMode('chat'));
 
 // Allow Enter key to trigger fetch
 experimentNameInput.addEventListener('keypress', (e) => {
     if (e.key === 'Enter') fetchMetrics();
 });
+
+if (chatInput) {
+    chatInput.addEventListener('keypress', (e) => {
+        if (e.key === 'Enter') sendChatMessage();
+    });
+}
+
+if (chatSendBtn) {
+    chatSendBtn.addEventListener('click', sendChatMessage);
+}
+
+if (chatExampleButtons && chatExampleButtons.length > 0) {
+    chatExampleButtons.forEach((btn) => {
+        btn.addEventListener('click', () => {
+            const prompt = btn.dataset.prompt || btn.textContent.trim();
+            if (chatInput) chatInput.value = prompt;
+            sendChatMessage();
+        });
+    });
+}
 
 // Sync dropdown selection with text input
 singleExperimentSelect.addEventListener('change', () => {
@@ -126,12 +154,14 @@ function switchMode(mode) {
     compareModeBtn.classList.remove('active');
     plotCompareModeBtn.classList.remove('active');
     if (leaderboardModeBtn) leaderboardModeBtn.classList.remove('active');
+    if (chatModeBtn) chatModeBtn.classList.remove('active');
 
     // Hide all sections
     singleMode.classList.add('hidden');
     compareMode.classList.add('hidden');
     plotCompareMode.classList.add('hidden');
     if (leaderboardMode) leaderboardMode.classList.add('hidden');
+    if (chatMode) chatMode.classList.add('hidden');
 
     // Activate selected mode
     if (mode === 'single') {
@@ -147,10 +177,154 @@ function switchMode(mode) {
         if (leaderboardModeBtn) leaderboardModeBtn.classList.add('active');
         if (leaderboardMode) leaderboardMode.classList.remove('hidden');
         fetchLeaderboard();
+    } else if (mode === 'chat') {
+        if (chatModeBtn) chatModeBtn.classList.add('active');
+        if (chatMode) chatMode.classList.remove('hidden');
     }
 
     // Hide results when switching modes (common cleanup)
     hideAllSections();
+}
+
+function appendChatBubble(role, contentNode) {
+    if (!chatMessages) return;
+    const bubble = document.createElement('div');
+    bubble.className = `chat-bubble ${role}`;
+    bubble.appendChild(contentNode);
+    chatMessages.appendChild(bubble);
+    chatMessages.scrollTop = chatMessages.scrollHeight;
+}
+
+function appendChatText(role, text) {
+    const textNode = document.createElement('p');
+    textNode.textContent = text;
+    appendChatBubble(role, textNode);
+}
+
+function appendChatTable(title, headers, rows) {
+    const wrapper = document.createElement('div');
+    if (title) {
+        const heading = document.createElement('div');
+        heading.className = 'chat-title';
+        heading.textContent = title;
+        wrapper.appendChild(heading);
+    }
+
+    const tableWrap = document.createElement('div');
+    tableWrap.className = 'runs-table';
+    const table = document.createElement('table');
+    const thead = document.createElement('thead');
+    const headRow = document.createElement('tr');
+    headers.forEach((h) => {
+        const th = document.createElement('th');
+        th.textContent = h;
+        headRow.appendChild(th);
+    });
+    thead.appendChild(headRow);
+    table.appendChild(thead);
+
+    const tbody = document.createElement('tbody');
+    rows.forEach((row) => {
+        const tr = document.createElement('tr');
+        row.forEach((cell) => {
+            const td = document.createElement('td');
+            td.textContent = cell;
+            tr.appendChild(td);
+        });
+        tbody.appendChild(tr);
+    });
+    table.appendChild(tbody);
+    tableWrap.appendChild(table);
+    wrapper.appendChild(tableWrap);
+    appendChatBubble('assistant', wrapper);
+}
+
+function renderChatResponse(payload) {
+    if (!payload || !payload.success) {
+        appendChatText('assistant', payload?.error || 'Sorry, I could not process that.');
+        return;
+    }
+
+    if (payload.type === 'experiments') {
+        const rows = payload.items.map((exp) => [exp.name, exp.experiment_id, exp.lifecycle_stage]);
+        appendChatTable('Experiments', ['Name', 'ID', 'Stage'], rows);
+        return;
+    }
+
+    if (payload.type === 'runs') {
+        const rows = payload.items.map((run) => [
+            run.run_name || '(unnamed)',
+            run.run_id,
+            run.status || ''
+        ]);
+        appendChatTable(`Runs for ${payload.experiment_name}`, ['Run Name', 'Run ID', 'Status'], rows);
+        return;
+    }
+
+    if (payload.type === 'run') {
+        const info = payload.item;
+        const lines = [
+            `Run: ${info.run_name || '(unnamed)'}`,
+            `ID: ${info.run_id}`,
+            `Status: ${info.status || ''}`
+        ];
+        appendChatText('assistant', lines.join(' | '));
+        return;
+    }
+
+    if (payload.type === 'help') {
+        appendChatText('assistant', payload.message);
+        return;
+    }
+
+    if (payload.type === 'llm') {
+        appendChatText('assistant', payload.message || 'No response.');
+        return;
+    }
+
+    if (payload.message) {
+        appendChatText('assistant', payload.message);
+        return;
+    }
+
+    appendChatText('assistant', JSON.stringify(payload, null, 2));
+}
+
+async function sendChatMessage() {
+    if (!chatInput || !chatSendBtn) return;
+    const message = chatInput.value.trim();
+    if (!message) return;
+
+    appendChatText('user', message);
+    chatInput.value = '';
+    chatSendBtn.disabled = true;
+
+    const thinking = document.createElement('p');
+    thinking.textContent = 'Thinking...';
+    const thinkingBubble = document.createElement('div');
+    thinkingBubble.className = 'chat-bubble assistant chat-thinking';
+    thinkingBubble.appendChild(thinking);
+    chatMessages.appendChild(thinkingBubble);
+    chatMessages.scrollTop = chatMessages.scrollHeight;
+
+    try {
+        const response = await fetch(`${API_BASE_URL}/chat`, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({ message })
+        });
+        const data = await response.json();
+        thinkingBubble.remove();
+        renderChatResponse(data);
+    } catch (error) {
+        thinkingBubble.remove();
+        appendChatText('assistant', error.message || 'Chat request failed.');
+    } finally {
+        chatSendBtn.disabled = false;
+        chatInput.focus();
+    }
 }
 
 // Main function to fetch metrics (single experiment mode)

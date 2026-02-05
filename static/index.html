@@ -41,10 +41,14 @@
                     <span class="nav-icon">🏆</span>
                     <span class="nav-text">Leaderboard</span>
                 </button>
+                <button id="chatModeBtn" class="nav-btn">
+                    <span class="nav-icon">💬</span>
+                    <span class="nav-text">Chat</span>
+                </button>
             </nav>
 
             <div class="sidebar-footer">
-                <p class="footer-text">v0.1.0 Dashboard</p>
+                <p class="footer-text">v1.0.0 Dashboard</p>
             </div>
         </aside>
 
@@ -225,6 +229,35 @@
                                 <div id="lgbmLeaderboard" class="mini-table-container">
                                     <!-- Table inserted by JS -->
                                 </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Chat Mode -->
+                    <div id="chatMode" class="mode-content hidden">
+                        <div class="card glass chat-card">
+                            <h2 class="card-title">Ask About Your Experiments</h2>
+                            <p class="helper-text">Ask in natural language. Examples: “List experiments”, “Show runs for
+                                GEF_MLP”, “Run 123abc…”.</p>
+
+                            <div id="chatMessages" class="chat-messages"></div>
+
+                            <div class="chat-input-row">
+                                <input type="text" id="chatInput" class="input-field"
+                                    placeholder="Ask about experiments, runs, metrics...">
+                                <button id="chatSendBtn" class="btn btn-primary">
+                                    <span class="btn-text">Send</span>
+                                    <span class="btn-icon">→</span>
+                                </button>
+                            </div>
+
+                            <div class="chat-examples">
+                                <button class="btn-secondary chat-example" data-prompt="List experiments">List
+                                    experiments</button>
+                                <button class="btn-secondary chat-example"
+                                    data-prompt="Show runs for experiment GEF_MLP">Show runs for GEF_MLP</button>
+                                <button class="btn-secondary chat-example"
+                                    data-prompt="Get details for run 123abc">Get run details</button>
                             </div>
                         </div>
                     </div>
