@@ -32,6 +32,9 @@ def _set_tracking_uri(tracking_uri: Optional[str]) -> str:
     # If the URI doesn't look like a valid scheme, fall back to default
     if "://" not in uri and not uri.startswith("file:"):
         uri = DEFAULT_TRACKING_URI
+    # Guard against accidental localhost from the web app
+    if uri.startswith("http://localhost:5000") or uri.startswith("http://127.0.0.1:5000"):
+        uri = DEFAULT_TRACKING_URI
     mlflow.set_tracking_uri(uri)
     return uri
 

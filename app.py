@@ -354,8 +354,7 @@ def _chat_llm(message: str, tracking_uri: str) -> str:
     if tool_calls:
         for item in tool_calls:
             args = json.loads(item.arguments or "{}")
-            if not args.get("tracking_uri"):
-                args["tracking_uri"] = tracking_uri
+            args["tracking_uri"] = tracking_uri
             tool_output = _mcp_call_tool(item.name, args)
             input_list.append(
                 {
