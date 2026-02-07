@@ -255,6 +255,8 @@ def _mcp_call_tool(tool_name: str, arguments: Dict, timeout_seconds: int = 45) -
         "mlflow_list_experiments": "mlflow.list_experiments",
         "mlflow_list_runs": "mlflow.list_runs",
         "mlflow_get_run": "mlflow.get_run",
+        "mlflow_list_pipeline_runs": "mlflow.list_pipeline_runs",
+        "mlflow_get_experiment_evaluation": "mlflow.get_experiment_evaluation",
     }
     mcp_tool = tool_map.get(tool_name)
     if not mcp_tool:
@@ -329,29 +331,76 @@ def _chat_llm(message: str, tracking_uri: str) -> str:
                 "required": ["run_id"],
             },
         },
+        {
+            "type": "function",
+            "name": "mlflow_list_pipeline_runs",
+            "description": "List parent pipeline runs and their child stages (load_data, etl, train_<model>, eval).",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "tracking_uri": {"type": "string"},
+                    "experiment_name": {"type": "string"},
+                    "experiment_id": {"type": "string"},
+                    "max_results": {"type": "integer", "default": 50},
+                    "include_children": {"type": "boolean", "default": True},
+                    "parent_name_contains": {"type": "string"},
+                },
+            },
+        },
+        {
+            "type": "function",
+            "name": "mlflow_get_experiment_evaluation",
+            "description": (
+                "Compute experiment-level eval metrics from eval child runs. "
+                "In aggregate_mode='auto', experiments with prefix 'GEF' are unweighted, "
+                "all others are weighted by timeseries counts inferred from eval artifacts."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "tracking_uri": {"type": "string"},
+                    "experiment_name": {"type": "string"},
+                    "experiment_id": {"type": "string"},
+                    "metrics": {"type": "array", "items": {"type": "string"}},
+                    "aggregate_mode": {
+                        "type": "string",
+                        "enum": ["auto", "weighted", "unweighted"],
+                        "default": "auto",
+                    },
+                    "parent_run_name": {"type": "string"},
+                    "include_parent_breakdown": {"type": "boolean", "default": False},
+                },
+            },
+        },
     ]
 
     input_list = [
         {
             "role": "system",
             "content": (
-                "You are an MLflow assistant. Use tools to fetch data. "
-                "Summarize results clearly in natural language. "
-                "Prefer concise answers and ask for clarification when needed."
+                "You are an MLflow assistant for time-series forecasting pipelines. "
+                "Use tools to fetch factual data before answering. "
+                "Pipeline structure: parent run is a full job; children are load_data, etl, train_<Model>, eval. "
+                "For total experiment evaluation, use mlflow_get_experiment_evaluation with aggregate_mode='auto' "
+                "unless user explicitly requests a different aggregation. "
+                "Summarize results clearly and concisely, and call out whether weighted or unweighted aggregation was used."
+                "Don't provide more metrics than mase, except it is asked for."
             ),
         },
         {"role": "user", "content": message},
     ]
 
-    response = client.responses.create(
-        model=OPENAI_MODEL,
-        tools=tools,
-        input=input_list,
-    )
-    input_list += response.output
+    for _ in range(6):
+        response = client.responses.create(
+            model=OPENAI_MODEL,
+            tools=tools,
+            input=input_list,
+        )
+        input_list += response.output
+        tool_calls = [item for item in response.output if item.type == "function_call"]
+        if not tool_calls:
+            return response.output_text
 
-    tool_calls = [item for item in response.output if item.type == "function_call"]
-    if tool_calls:
         for item in tool_calls:
             args = json.loads(item.arguments or "{}")
             args["tracking_uri"] = tracking_uri
@@ -364,13 +413,7 @@ def _chat_llm(message: str, tracking_uri: str) -> str:
                 }
             )
 
-        response = client.responses.create(
-            model=OPENAI_MODEL,
-            tools=tools,
-            input=input_list,
-        )
-
-    return response.output_text
+    return "I could not complete the tool-calling workflow within the allowed number of steps."
 
 @app.route('/api/experiments', methods=['GET'])
 def list_experiments():
