@@ -5,6 +5,9 @@ from mlflow.tracking import MlflowClient
 import math
 from typing import List, Dict, Optional
 from concurrent.futures import ThreadPoolExecutor, as_completed
+import threading
+import uuid
+import hashlib
 import boto3
 from botocore import UNSIGNED
 from botocore.client import Config
@@ -37,7 +40,11 @@ OPENAI_MODEL = os.environ.get("OPENAI_MODEL", "gpt-4.1-mini")
 OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY", "")
 MCP_BASE_URL = os.environ.get("MCP_BASE_URL", "http://127.0.0.1:7001")
 MCP_TIMEOUT_SECONDS = int(os.environ.get("MCP_TIMEOUT_SECONDS", "45"))
+CHAT_MEMORY_MAX_TURNS = int(os.environ.get("CHAT_MEMORY_MAX_TURNS", "10"))
 _mcp_next_id = 1
+
+_chat_sessions: Dict[str, List[Dict[str, str]]] = {}
+_chat_sessions_lock = threading.Lock()
 
 
 def _mcp_request(method: str, params: Dict, timeout_seconds: int = MCP_TIMEOUT_SECONDS) -> Dict:
@@ -285,7 +292,7 @@ def _mcp_call_tool(tool_name: str, arguments: Dict, timeout_seconds: int = 45) -
     return json.loads(text_payload)
 
 
-def _chat_llm(message: str, tracking_uri: str) -> str:
+def _chat_llm(message: str, tracking_uri: str, history: Optional[List[Dict[str, str]]] = None) -> str:
     if not OPENAI_API_KEY:
         raise ValueError("OPENAI_API_KEY is not set")
 
@@ -387,8 +394,10 @@ def _chat_llm(message: str, tracking_uri: str) -> str:
                 "Don't provide more metrics than mase, except it is asked for."
             ),
         },
-        {"role": "user", "content": message},
     ]
+    if history:
+        input_list.extend(history)
+    input_list.append({"role": "user", "content": message})
 
     for _ in range(6):
         response = client.responses.create(
@@ -450,9 +459,17 @@ def chat_query():
     Minimal chat endpoint for natural language queries about MLflow experiments.
     """
     try:
-        data = request.get_json()
+        data = request.get_json(silent=True) or {}
         message = (data.get('message') or '').strip()
         tracking_uri = data.get('tracking_uri', DEFAULT_TRACKING_URI)
+        conversation_id = (data.get('conversation_id') or '').strip()
+        if not conversation_id:
+            conversation_id = (request.headers.get('X-Conversation-Id') or '').strip()
+        if not conversation_id:
+            remote = request.headers.get('X-Forwarded-For') or request.remote_addr or 'unknown'
+            user_agent = request.headers.get('User-Agent') or 'unknown'
+            base = f"{remote}|{user_agent}".encode('utf-8')
+            conversation_id = f"anon_{hashlib.sha256(base).hexdigest()[:24]}"
 
         if not message:
             return jsonify({'success': False, 'error': 'message is required'}), 400
@@ -463,8 +480,48 @@ def chat_query():
                 'error': 'OPENAI_API_KEY is not set on the server'
             }), 500
 
-        response_text = _chat_llm(message, tracking_uri)
-        return jsonify({'success': True, 'type': 'llm', 'message': response_text})
+        with _chat_sessions_lock:
+            history = list(_chat_sessions.get(conversation_id, []))
+
+        response_text = _chat_llm(message, tracking_uri, history=history)
+
+        with _chat_sessions_lock:
+            session_history = _chat_sessions.setdefault(conversation_id, [])
+            session_history.append({"role": "user", "content": message})
+            session_history.append({"role": "assistant", "content": response_text})
+            max_messages = max(2, CHAT_MEMORY_MAX_TURNS * 2)
+            if len(session_history) > max_messages:
+                _chat_sessions[conversation_id] = session_history[-max_messages:]
+
+        return jsonify({
+            'success': True,
+            'type': 'llm',
+            'message': response_text,
+            'conversation_id': conversation_id,
+            'memory_max_turns': CHAT_MEMORY_MAX_TURNS
+        })
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@app.route('/api/chat/reset', methods=['POST'])
+def chat_reset():
+    """Reset the stored chat memory for a specific conversation_id."""
+    try:
+        data = request.get_json(silent=True) or {}
+        conversation_id = (data.get('conversation_id') or '').strip()
+        if not conversation_id:
+            return jsonify({'success': False, 'error': 'conversation_id is required'}), 400
+
+        with _chat_sessions_lock:
+            existed = conversation_id in _chat_sessions
+            _chat_sessions.pop(conversation_id, None)
+
+        return jsonify({
+            'success': True,
+            'conversation_id': conversation_id,
+            'cleared': existed
+        })
     except Exception as e:
         return jsonify({'success': False, 'error': str(e)}), 500
 

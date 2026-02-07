@@ -85,6 +85,34 @@ const chatMessages = document.getElementById('chatMessages');
 const chatInput = document.getElementById('chatInput');
 const chatSendBtn = document.getElementById('chatSendBtn');
 const chatExampleButtons = document.querySelectorAll('.chat-example');
+const CHAT_CONVERSATION_STORAGE_KEY = 'mlflow_chat_conversation_id';
+let chatConversationId = localStorage.getItem(CHAT_CONVERSATION_STORAGE_KEY) || '';
+
+function setChatConversationId(conversationId) {
+    chatConversationId = (conversationId || '').trim();
+    if (chatConversationId) {
+        localStorage.setItem(CHAT_CONVERSATION_STORAGE_KEY, chatConversationId);
+    } else {
+        localStorage.removeItem(CHAT_CONVERSATION_STORAGE_KEY);
+    }
+}
+
+async function resetChatConversation() {
+    if (!chatConversationId) return;
+    try {
+        await fetch(`${API_BASE_URL}/chat/reset`, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({ conversation_id: chatConversationId })
+        });
+    } catch (_) {
+        // Best effort reset; keep UX responsive even if reset fails.
+    } finally {
+        setChatConversationId('');
+    }
+}
 
 // Event Listeners - Single Mode
 fetchButton.addEventListener('click', fetchMetrics);
@@ -295,6 +323,14 @@ async function sendChatMessage() {
     const message = chatInput.value.trim();
     if (!message) return;
 
+    if (message === '/reset') {
+        appendChatText('user', message);
+        chatInput.value = '';
+        await resetChatConversation();
+        appendChatText('assistant', 'Conversation memory cleared.');
+        return;
+    }
+
     appendChatText('user', message);
     chatInput.value = '';
     chatSendBtn.disabled = true;
@@ -313,9 +349,15 @@ async function sendChatMessage() {
             headers: {
                 'Content-Type': 'application/json'
             },
-            body: JSON.stringify({ message })
+            body: JSON.stringify({
+                message,
+                conversation_id: chatConversationId || undefined
+            })
         });
         const data = await response.json();
+        if (data?.conversation_id) {
+            setChatConversationId(data.conversation_id);
+        }
         thinkingBubble.remove();
         renderChatResponse(data);
     } catch (error) {
