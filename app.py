@@ -37,6 +37,7 @@ CORS(app)
 # Default MLflow tracking URI
 DEFAULT_TRACKING_URI = os.environ.get("MLFLOW_TRACKING_URI", "https://mlflow.gpu.epu.ntua.gr")
 OPENAI_MODEL = os.environ.get("OPENAI_MODEL", "gpt-4.1-mini")
+OPENAI_ALLOWED_MODELS = {"gpt-5.1", "gpt-5-mini", "gpt-4.1-mini"}
 OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY", "")
 MCP_BASE_URL = os.environ.get("MCP_BASE_URL", "http://127.0.0.1:7001")
 MCP_TIMEOUT_SECONDS = int(os.environ.get("MCP_TIMEOUT_SECONDS", "45"))
@@ -255,8 +256,7 @@ def index():
 
 
 def _mcp_call_tool(tool_name: str, arguments: Dict, timeout_seconds: int = 45) -> Dict:
-    if not arguments.get("tracking_uri"):
-        arguments["tracking_uri"] = DEFAULT_TRACKING_URI
+    arguments["tracking_uri"] = DEFAULT_TRACKING_URI
 
     tool_map = {
         "mlflow_list_experiments": "mlflow.list_experiments",
@@ -292,9 +292,19 @@ def _mcp_call_tool(tool_name: str, arguments: Dict, timeout_seconds: int = 45) -
     return json.loads(text_payload)
 
 
-def _chat_llm(message: str, tracking_uri: str, history: Optional[List[Dict[str, str]]] = None) -> str:
+def _chat_llm(
+    message: str,
+    history: Optional[List[Dict[str, str]]] = None,
+    model: Optional[str] = None,
+) -> str:
     if not OPENAI_API_KEY:
         raise ValueError("OPENAI_API_KEY is not set")
+
+    selected_model = (model or OPENAI_MODEL).strip()
+    if selected_model not in OPENAI_ALLOWED_MODELS:
+        raise ValueError(
+            f"Unsupported model '{selected_model}'. Allowed models: {', '.join(sorted(OPENAI_ALLOWED_MODELS))}"
+        )
 
     client = OpenAI(api_key=OPENAI_API_KEY)
     tools = [
@@ -305,7 +315,6 @@ def _chat_llm(message: str, tracking_uri: str, history: Optional[List[Dict[str, 
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "tracking_uri": {"type": "string"},
                 },
             },
         },
@@ -316,7 +325,6 @@ def _chat_llm(message: str, tracking_uri: str, history: Optional[List[Dict[str, 
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "tracking_uri": {"type": "string"},
                     "experiment_name": {"type": "string"},
                     "experiment_id": {"type": "string"},
                     "max_results": {"type": "integer", "default": 50},
@@ -332,7 +340,6 @@ def _chat_llm(message: str, tracking_uri: str, history: Optional[List[Dict[str, 
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "tracking_uri": {"type": "string"},
                     "run_id": {"type": "string"},
                 },
                 "required": ["run_id"],
@@ -345,7 +352,6 @@ def _chat_llm(message: str, tracking_uri: str, history: Optional[List[Dict[str, 
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "tracking_uri": {"type": "string"},
                     "experiment_name": {"type": "string"},
                     "experiment_id": {"type": "string"},
                     "max_results": {"type": "integer", "default": 50},
@@ -365,7 +371,6 @@ def _chat_llm(message: str, tracking_uri: str, history: Optional[List[Dict[str, 
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "tracking_uri": {"type": "string"},
                     "experiment_name": {"type": "string"},
                     "experiment_id": {"type": "string"},
                     "metrics": {"type": "array", "items": {"type": "string"}},
@@ -390,8 +395,10 @@ def _chat_llm(message: str, tracking_uri: str, history: Optional[List[Dict[str, 
                 "Pipeline structure: parent run is a full job; children are load_data, etl, train_<Model>, eval. "
                 "For total experiment evaluation, use mlflow_get_experiment_evaluation with aggregate_mode='auto' "
                 "unless user explicitly requests a different aggregation. "
+                f"The MLflow tracking URI is fixed and already configured as {DEFAULT_TRACKING_URI}; never ask the user for tracking_uri. "
                 "Summarize results clearly and concisely, and call out whether weighted or unweighted aggregation was used."
-                "Don't provide more metrics than mase, except it is asked for."
+                "Don't provide more metrics than MASE, except it is asked for."
+                "Don't provide the run ID"
             ),
         },
     ]
@@ -401,7 +408,7 @@ def _chat_llm(message: str, tracking_uri: str, history: Optional[List[Dict[str, 
 
     for _ in range(6):
         response = client.responses.create(
-            model=OPENAI_MODEL,
+            model=selected_model,
             tools=tools,
             input=input_list,
         )
@@ -412,7 +419,6 @@ def _chat_llm(message: str, tracking_uri: str, history: Optional[List[Dict[str, 
 
         for item in tool_calls:
             args = json.loads(item.arguments or "{}")
-            args["tracking_uri"] = tracking_uri
             tool_output = _mcp_call_tool(item.name, args)
             input_list.append(
                 {
@@ -461,7 +467,7 @@ def chat_query():
     try:
         data = request.get_json(silent=True) or {}
         message = (data.get('message') or '').strip()
-        tracking_uri = data.get('tracking_uri', DEFAULT_TRACKING_URI)
+        selected_model = (data.get('model') or OPENAI_MODEL).strip()
         conversation_id = (data.get('conversation_id') or '').strip()
         if not conversation_id:
             conversation_id = (request.headers.get('X-Conversation-Id') or '').strip()
@@ -479,11 +485,17 @@ def chat_query():
                 'success': False,
                 'error': 'OPENAI_API_KEY is not set on the server'
             }), 500
+        if selected_model not in OPENAI_ALLOWED_MODELS:
+            return jsonify({
+                'success': False,
+                'error': f"Unsupported model '{selected_model}'",
+                'allowed_models': sorted(OPENAI_ALLOWED_MODELS)
+            }), 400
 
         with _chat_sessions_lock:
             history = list(_chat_sessions.get(conversation_id, []))
 
-        response_text = _chat_llm(message, tracking_uri, history=history)
+        response_text = _chat_llm(message, history=history, model=selected_model)
 
         with _chat_sessions_lock:
             session_history = _chat_sessions.setdefault(conversation_id, [])
@@ -498,7 +510,9 @@ def chat_query():
             'type': 'llm',
             'message': response_text,
             'conversation_id': conversation_id,
-            'memory_max_turns': CHAT_MEMORY_MAX_TURNS
+            'memory_max_turns': CHAT_MEMORY_MAX_TURNS,
+            'model': selected_model,
+            'allowed_models': sorted(OPENAI_ALLOWED_MODELS)
         })
     except Exception as e:
         return jsonify({'success': False, 'error': str(e)}), 500
@@ -806,27 +820,32 @@ def get_leaderboard():
         global_leaderboard.sort(key=lambda x: x['mase'] if x.get('mase') is not None else float('inf'))
 
         # --- 2. Architecture Leaderboards (Experiment Total Performance) ---
-        arch_keywords = ['MLP', 'NBEATS', 'LSTM', 'LightGBM']
+        arch_prefixes = {
+            'MLP': 'MLP_',
+            'NBEATS': 'NBEATS_',
+            'LSTM': 'LSTM_',
+            'LightGBM': 'LIGHTGBM_',
+        }
         all_experiments = client.search_experiments()
-        architectures_data = {k: [] for k in arch_keywords}
+        architectures_data = {k: [] for k in arch_prefixes}
         
         for exp in all_experiments:
             if exp.lifecycle_stage != 'active': continue
             exp_name_upper = exp.name.upper()
             
-            for keyword in arch_keywords:
-                if keyword in exp_name_upper:
+            for arch_name, prefix in arch_prefixes.items():
+                if exp_name_upper.startswith(prefix):
                     total_mase = get_experiment_total_mase(tracking_uri, exp.name)
                     if total_mase is not None:
-                        architectures_data[keyword].append({
+                        architectures_data[arch_name].append({
                             'experiment': exp.name,
                             'mase': total_mase
                         })
                     break # Assign to the first matching architecture
         
         # Sort each architecture group by MASE
-        for keyword in arch_keywords:
-            architectures_data[keyword].sort(key=lambda x: x['mase'])
+        for arch_name in arch_prefixes:
+            architectures_data[arch_name].sort(key=lambda x: x['mase'])
 
         payload = {
             'success': True,

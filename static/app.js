@@ -84,9 +84,21 @@ const closePreviewBtn = document.getElementById('closePreviewBtn');
 const chatMessages = document.getElementById('chatMessages');
 const chatInput = document.getElementById('chatInput');
 const chatSendBtn = document.getElementById('chatSendBtn');
+const chatModelSelect = document.getElementById('chatModelSelect');
 const chatExampleButtons = document.querySelectorAll('.chat-example');
 const CHAT_CONVERSATION_STORAGE_KEY = 'mlflow_chat_conversation_id';
+const CHAT_MODEL_STORAGE_KEY = 'mlflow_chat_model';
 let chatConversationId = localStorage.getItem(CHAT_CONVERSATION_STORAGE_KEY) || '';
+
+if (chatModelSelect) {
+    const savedModel = localStorage.getItem(CHAT_MODEL_STORAGE_KEY);
+    if (savedModel) {
+        chatModelSelect.value = savedModel;
+    }
+    chatModelSelect.addEventListener('change', () => {
+        localStorage.setItem(CHAT_MODEL_STORAGE_KEY, chatModelSelect.value);
+    });
+}
 
 function setChatConversationId(conversationId) {
     chatConversationId = (conversationId || '').trim();
@@ -351,7 +363,8 @@ async function sendChatMessage() {
             },
             body: JSON.stringify({
                 message,
-                conversation_id: chatConversationId || undefined
+                conversation_id: chatConversationId || undefined,
+                model: chatModelSelect ? chatModelSelect.value : undefined
             })
         });
         const data = await response.json();
