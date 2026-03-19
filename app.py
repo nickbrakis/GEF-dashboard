@@ -71,6 +71,7 @@ MINIO_SECRET_KEY = os.environ.get('MINIO_SECRET_KEY', '')
 # Leaderboard caching (simple in-memory cache)
 LEADERBOARD_CACHE_TTL_SECONDS = int(os.environ.get("LEADERBOARD_CACHE_TTL_SECONDS", "900"))
 _leaderboard_cache = {"timestamp": None, "payload": None, "tracking_uri": None}
+_leaderboard_warmer_started = False
 
 _timeseries_count_cache: Dict[tuple, int] = {}
 
@@ -84,6 +85,8 @@ def get_eval_metrics(
 ) -> List[Dict]:
     """
     Retrieve metrics from eval subruns of an MLflow experiment.
+    Fetches all runs in a single API call and groups them in Python
+    to avoid N+1 queries.
     """
     mlflow.set_tracking_uri(tracking_uri)
     client = MlflowClient()
@@ -96,50 +99,63 @@ def get_eval_metrics(
     if verbose:
         print(f"Found experiment: {experiment_name} (ID: {experiment_id})")
 
-    parent_runs = client.search_runs(
+    all_runs = client.search_runs(
         experiment_ids=[experiment_id],
         filter_string="",
         run_view_type=mlflow.entities.ViewType.ACTIVE_ONLY,
-        max_results=1000,
+        max_results=5000,
     )
 
+    # Split into parents (no parentRunId tag) and children (have parentRunId tag)
+    parents = {}
+    children = []
+    for run in all_runs:
+        if "mlflow.parentRunId" in run.data.tags:
+            children.append(run)
+        else:
+            parents[run.info.run_id] = run
+
     if parent_filter:
-        parent_runs = [r for r in parent_runs if r.data.tags.get("mlflow.runName") == parent_filter]
+        parents = {
+            rid: r for rid, r in parents.items()
+            if r.data.tags.get("mlflow.runName") == parent_filter
+        }
 
     if verbose:
-        print(f"Found {len(parent_runs)} runs")
+        print(f"Found {len(parents)} parent runs, {len(children)} child runs")
 
     results = []
-    for parent_run in parent_runs:
+    for child_run in children:
+        parent_run_id = child_run.data.tags.get("mlflow.parentRunId")
+        if parent_run_id not in parents:
+            continue
+
+        child_run_name = child_run.data.tags.get("mlflow.runName", "")
+        if "eval" not in child_run_name.lower():
+            continue
+
+        metrics = child_run.data.metrics
+        if metric_name not in metrics:
+            continue
+
+        parent_run = parents[parent_run_id]
         parent_run_name = parent_run.data.tags.get("mlflow.runName", "Unknown")
 
-        child_runs = client.search_runs(
-            experiment_ids=[experiment_id],
-            filter_string=f"tags.mlflow.parentRunId = '{parent_run.info.run_id}'",
-            run_view_type=mlflow.entities.ViewType.ACTIVE_ONLY,
-            max_results=1000,
-        )
+        result = {
+            "parent_run_id": parent_run_id,
+            "parent_run_name": parent_run_name,
+            "eval_run_id": child_run.info.run_id,
+            "eval_run_name": child_run_name,
+            "metric_name": metric_name,
+            "metric_value": metrics[metric_name],
+        }
+        results.append(result)
 
-        for child_run in child_runs:
-            child_run_name = child_run.data.tags.get("mlflow.runName", "")
+        if verbose:
+            print(f"  Parent: {parent_run_name}")
+            print(f"    Eval: {child_run_name}")
+            print(f"    {metric_name}: {metrics[metric_name]}")
 
-            if "eval" in child_run_name.lower():
-                metrics = child_run.data.metrics
-                if metric_name in metrics:
-                    result = {
-                        "parent_run_id": parent_run.info.run_id,
-                        "parent_run_name": parent_run_name,
-                        "eval_run_id": child_run.info.run_id,
-                        "eval_run_name": child_run_name,
-                        "metric_name": metric_name,
-                        "metric_value": metrics[metric_name],
-                    }
-                    results.append(result)
-
-                    if verbose:
-                        print(f"  Parent: {parent_run_name}")
-                        print(f"    Eval: {child_run_name}")
-                        print(f"    {metric_name}: {metrics[metric_name]}")
     return results
 
 
@@ -748,6 +764,129 @@ def get_experiment_total_mase(tracking_uri: str, experiment_name: str) -> Option
         print(f"Error calculating total MASE for {experiment_name}: {e}")
         return None
 
+def _compute_leaderboard_payload(tracking_uri: str) -> dict:
+    """
+    Compute the full leaderboard payload. Separated from the route so it
+    can be called from both the request handler and the background warmer.
+    """
+    mlflow.set_tracking_uri(tracking_uri)
+    client = MlflowClient()
+
+    # --- 1. Global Leaderboard (Best Parent Run Logic) ---
+    target_global_experiments = ['GEF_MLP', 'GEF_NBEATS', 'GEF_LSTM', 'GEF_TCN']
+    global_leaderboard = []
+
+    for exp_name in target_global_experiments:
+        try:
+            mase_results = get_eval_metrics(tracking_uri, exp_name, 'mase', verbose=False)
+            if not mase_results: continue
+
+            mase_run_ids = [r["eval_run_id"] for r in mase_results if not math.isnan(r["metric_value"])]
+            mase_counts = get_timeseries_counts(tracking_uri, mase_run_ids)
+
+            parent_run_stats = {}
+            for r in mase_results:
+                val = r["metric_value"]
+                if math.isnan(val): continue
+                p_name = r["parent_run_name"]
+                if exp_name == 'GEF_NBEATS' and p_name.startswith('nbeats_clusters_'):
+                    continue
+                if p_name not in parent_run_stats:
+                    parent_run_stats[p_name] = {'weighted_sum': 0.0, 'total_ts_count': 0}
+                ts_count = mase_counts.get(r["eval_run_id"], 0)
+                if ts_count > 0:
+                    parent_run_stats[p_name]['weighted_sum'] += val * ts_count
+                    parent_run_stats[p_name]['total_ts_count'] += ts_count
+
+            best_parent_run = None
+            best_mase = float('inf')
+            for p_name, stats in parent_run_stats.items():
+                if stats['total_ts_count'] > 0:
+                    avg_mase = stats['weighted_sum'] / stats['total_ts_count']
+                    if avg_mase < best_mase:
+                        best_mase = avg_mase
+                        best_parent_run = p_name
+
+            if best_parent_run:
+                row = {'experiment': exp_name, 'parent_run': best_parent_run, 'mase': best_mase}
+                for m in ['mae', 'mape', 'rmse']:
+                    other_results = get_eval_metrics(tracking_uri, exp_name, m, parent_filter=best_parent_run, verbose=False)
+                    other_run_ids = [r["eval_run_id"] for r in other_results if not math.isnan(r["metric_value"])]
+                    other_counts = get_timeseries_counts(tracking_uri, other_run_ids)
+                    stats = compute_weighted_metric_stats(other_results, other_counts)
+                    row[m] = stats["weighted_average"]
+                global_leaderboard.append(row)
+        except Exception as e:
+            print(f"Error processing global leaderboard for {exp_name}: {e}")
+
+    global_leaderboard.sort(key=lambda x: x['mase'] if x.get('mase') is not None else float('inf'))
+
+    # --- 2. Architecture Leaderboards (Experiment Total Performance) ---
+    arch_prefixes = {
+        'MLP': 'MLP_',
+        'NBEATS': 'NBEATS_',
+        'LSTM': 'LSTM_',
+        'TCN': 'TCN_',
+    }
+    all_experiments = client.search_experiments()
+    architectures_data = {k: [] for k in arch_prefixes}
+
+    for exp in all_experiments:
+        if exp.lifecycle_stage != 'active': continue
+        exp_name_upper = exp.name.upper()
+        for arch_name, prefix in arch_prefixes.items():
+            if exp_name_upper.startswith(prefix):
+                total_mase = get_experiment_total_mase(tracking_uri, exp.name)
+                if total_mase is not None:
+                    architectures_data[arch_name].append({
+                        'experiment': exp.name,
+                        'mase': total_mase
+                    })
+                break
+
+    for arch_name in arch_prefixes:
+        architectures_data[arch_name].sort(key=lambda x: x['mase'])
+
+    return {
+        'success': True,
+        'global': global_leaderboard,
+        'architectures': architectures_data
+    }
+
+
+def _warm_leaderboard_cache(tracking_uri: str) -> None:
+    """Compute leaderboard and store in cache. Safe to call from a background thread."""
+    print(f"[leaderboard] warming cache for {tracking_uri} ...")
+    try:
+        payload = _compute_leaderboard_payload(tracking_uri)
+        _leaderboard_cache["payload"] = payload
+        _leaderboard_cache["timestamp"] = pd.Timestamp.utcnow().timestamp()
+        _leaderboard_cache["tracking_uri"] = tracking_uri
+        print("[leaderboard] cache warmed successfully")
+    except Exception as e:
+        print(f"[leaderboard] cache warm failed: {e}")
+
+
+def _start_leaderboard_warmer(tracking_uri: str) -> None:
+    """
+    Start a daemon thread that pre-warms the leaderboard cache on startup,
+    then refreshes it periodically (every LEADERBOARD_CACHE_TTL_SECONDS).
+    No-op if already started (safe to call multiple times).
+    """
+    global _leaderboard_warmer_started
+    if _leaderboard_warmer_started:
+        return
+    _leaderboard_warmer_started = True
+
+    def _loop():
+        while True:
+            _warm_leaderboard_cache(tracking_uri)
+            threading.Event().wait(LEADERBOARD_CACHE_TTL_SECONDS)
+
+    t = threading.Thread(target=_loop, daemon=True, name="leaderboard-warmer")
+    t.start()
+
+
 @app.route('/api/leaderboard', methods=['GET'])
 def get_leaderboard():
     """
@@ -767,96 +906,13 @@ def get_leaderboard():
         ):
             return jsonify(cached_payload)
 
-        mlflow.set_tracking_uri(tracking_uri)
-        client = MlflowClient()
-        
-        # --- 1. Global Leaderboard (Best Parent Run Logic) ---
-        target_global_experiments = ['GEF_MLP', 'GEF_NBEATS', 'GEF_LSTM', 'GEF_LightGBM', 'GEF_TCN']
-        global_leaderboard = []
-        
-        for exp_name in target_global_experiments:
-            try:
-                mase_results = get_eval_metrics(tracking_uri, exp_name, 'mase', verbose=False)
-                if not mase_results: continue
-
-                mase_run_ids = [r["eval_run_id"] for r in mase_results if not math.isnan(r["metric_value"])]
-                mase_counts = get_timeseries_counts(tracking_uri, mase_run_ids)
-
-                parent_run_stats = {}
-                for r in mase_results:
-                    val = r["metric_value"]
-                    if math.isnan(val): continue
-                    p_name = r["parent_run_name"]
-                    p_id = r["parent_run_id"]
-                    if p_name not in parent_run_stats:
-                        parent_run_stats[p_name] = {'weighted_sum': 0.0, 'total_ts_count': 0}
-                    ts_count = mase_counts.get(r["eval_run_id"], 0)
-                    if ts_count > 0:
-                        parent_run_stats[p_name]['weighted_sum'] += val * ts_count
-                        parent_run_stats[p_name]['total_ts_count'] += ts_count
-
-                best_parent_run = None
-                best_mase = float('inf')
-                for p_name, stats in parent_run_stats.items():
-                    if stats['total_ts_count'] > 0:
-                        avg_mase = stats['weighted_sum'] / stats['total_ts_count']
-                        if avg_mase < best_mase:
-                            best_mase = avg_mase
-                            best_parent_run = p_name
-                
-                if best_parent_run:
-                    row = {'experiment': exp_name, 'parent_run': best_parent_run, 'mase': best_mase}
-                    # Get other metrics for the winner
-                    for m in ['mae', 'mape', 'rmse']:
-                         other_results = get_eval_metrics(tracking_uri, exp_name, m, parent_filter=best_parent_run, verbose=False)
-                         other_run_ids = [r["eval_run_id"] for r in other_results if not math.isnan(r["metric_value"])]
-                         other_counts = get_timeseries_counts(tracking_uri, other_run_ids)
-                         stats = compute_weighted_metric_stats(other_results, other_counts)
-                         row[m] = stats["weighted_average"]
-                    global_leaderboard.append(row)
-            except Exception as e:
-                print(f"Error processing global leaderboard for {exp_name}: {e}")
-
-        global_leaderboard.sort(key=lambda x: x['mase'] if x.get('mase') is not None else float('inf'))
-
-        # --- 2. Architecture Leaderboards (Experiment Total Performance) ---
-        arch_prefixes = {
-            'MLP': 'MLP_',
-            'NBEATS': 'NBEATS_',
-            'LSTM': 'LSTM_',
-            'LightGBM': 'LIGHTGBM_',
-        }
-        all_experiments = client.search_experiments()
-        architectures_data = {k: [] for k in arch_prefixes}
-        
-        for exp in all_experiments:
-            if exp.lifecycle_stage != 'active': continue
-            exp_name_upper = exp.name.upper()
-            
-            for arch_name, prefix in arch_prefixes.items():
-                if exp_name_upper.startswith(prefix):
-                    total_mase = get_experiment_total_mase(tracking_uri, exp.name)
-                    if total_mase is not None:
-                        architectures_data[arch_name].append({
-                            'experiment': exp.name,
-                            'mase': total_mase
-                        })
-                    break # Assign to the first matching architecture
-        
-        # Sort each architecture group by MASE
-        for arch_name in arch_prefixes:
-            architectures_data[arch_name].sort(key=lambda x: x['mase'])
-
-        payload = {
-            'success': True,
-            'global': global_leaderboard,
-            'architectures': architectures_data
-        }
-        _leaderboard_cache["timestamp"] = pd.Timestamp.utcnow().timestamp()
+        # Cache miss — compute synchronously (fallback for non-default URIs)
+        payload = _compute_leaderboard_payload(tracking_uri)
         _leaderboard_cache["payload"] = payload
+        _leaderboard_cache["timestamp"] = pd.Timestamp.utcnow().timestamp()
         _leaderboard_cache["tracking_uri"] = tracking_uri
         return jsonify(payload)
-        
+
     except Exception as e:
         return jsonify({'success': False, 'error': str(e)}), 500
 
@@ -1146,6 +1202,9 @@ def health_check():
         'default_tracking_uri': DEFAULT_TRACKING_URI
     })
 
+# Start the warmer when running under Gunicorn or any other WSGI server
+_start_leaderboard_warmer(DEFAULT_TRACKING_URI)
+
 if __name__ == '__main__':
     print("=" * 60)
     print("MLflow Metrics Visualization App")
@@ -1153,4 +1212,5 @@ if __name__ == '__main__':
     print(f"Server starting at: http://localhost:5000")
     print(f"Default MLflow URI: {DEFAULT_TRACKING_URI}")
     print("=" * 60)
+    _start_leaderboard_warmer(DEFAULT_TRACKING_URI)
     app.run(debug=True, host='0.0.0.0', port=5000)

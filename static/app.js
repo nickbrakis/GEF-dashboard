@@ -1220,7 +1220,7 @@ async function fetchLeaderboard() {
             renderMiniLeaderboard('mlpLeaderboard', archMap['MLP']);
             renderMiniLeaderboard('nbeatsLeaderboard', archMap['NBEATS']);
             renderMiniLeaderboard('lstmLeaderboard', archMap['LSTM']);
-            renderMiniLeaderboard('lgbmLeaderboard', archMap['LightGBM']);
+            renderMiniLeaderboard('tcnLeaderboard', archMap['TCN']);
         }
 
     } catch (error) {
