@@ -483,6 +483,7 @@ Just report the MASE value directly.
 - Report only MASE unless the user explicitly asks for other metrics.
 - Do not include run IDs in your responses.
 - Keep responses concise and researcher-friendly.
+- When the user asks for a comparison table, or when comparing 3 or more experiments, format the results as a markdown table with columns: Experiment | MASE. Always sort by MASE ascending (best first).
 - Never guess experiment names. When the user refers to an architecture group (e.g. "LSTM models", "MLP experiments"), \
 use `mlflow_compare_experiments` with the appropriate prefix (e.g. "LSTM_", "MLP_") — it will discover and compare all matching experiments automatically.
 - For questions comparing multiple experiments or an architecture group, always prefer `mlflow_compare_experiments` over calling `mlflow_get_experiment_evaluation` in a loop.""",

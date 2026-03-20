@@ -220,6 +220,11 @@ function switchMode(mode) {
     } else if (mode === 'chat') {
         if (chatModeBtn) chatModeBtn.classList.add('active');
         if (chatMode) chatMode.classList.remove('hidden');
+        document.body.classList.add('chat-active');
+    }
+
+    if (mode !== 'chat') {
+        document.body.classList.remove('chat-active');
     }
 
     // Hide results when switching modes (common cleanup)
@@ -279,6 +284,79 @@ function appendChatTable(title, headers, rows) {
     appendChatBubble('assistant', wrapper);
 }
 
+function isSeparatorLine(line) {
+    return /^\|?[\s]*[-:]+[-|:\s]*$/.test(line.trim());
+}
+
+function parseMarkdownTable(lines) {
+    const dataLines = lines.filter(l => !isSeparatorLine(l) && l.trim().startsWith('|'));
+    if (dataLines.length < 2) return null;
+    const parseRow = line => line.replace(/^\||\|$/g, '').split('|').map(c => c.trim());
+    return { headers: parseRow(dataLines[0]), rows: dataLines.slice(1).map(parseRow) };
+}
+
+function renderMarkdownResponse(text) {
+    const wrapper = document.createElement('div');
+    wrapper.className = 'chat-markdown';
+
+    // Split text into table blocks and text blocks line by line
+    const lines = text.split('\n');
+    let i = 0;
+    while (i < lines.length) {
+        // Collect a table block (consecutive lines starting with |)
+        if (lines[i].trim().startsWith('|')) {
+            const tableLines = [];
+            while (i < lines.length && lines[i].trim().startsWith('|')) {
+                tableLines.push(lines[i]);
+                i++;
+            }
+            const parsed = parseMarkdownTable(tableLines);
+            if (parsed) {
+                const tableWrap = document.createElement('div');
+                tableWrap.className = 'runs-table';
+                const table = document.createElement('table');
+                const thead = document.createElement('thead');
+                const headRow = document.createElement('tr');
+                parsed.headers.forEach(h => {
+                    const th = document.createElement('th');
+                    th.textContent = h;
+                    headRow.appendChild(th);
+                });
+                thead.appendChild(headRow);
+                table.appendChild(thead);
+                const tbody = document.createElement('tbody');
+                parsed.rows.forEach(row => {
+                    const tr = document.createElement('tr');
+                    row.forEach(cell => {
+                        const td = document.createElement('td');
+                        td.textContent = cell;
+                        tr.appendChild(td);
+                    });
+                    tbody.appendChild(tr);
+                });
+                table.appendChild(tbody);
+                tableWrap.appendChild(table);
+                wrapper.appendChild(tableWrap);
+            }
+        } else {
+            // Collect consecutive non-table lines as a text paragraph
+            const textLines = [];
+            while (i < lines.length && !lines[i].trim().startsWith('|')) {
+                textLines.push(lines[i]);
+                i++;
+            }
+            const content = textLines.join('\n').trim();
+            if (content) {
+                const p = document.createElement('p');
+                p.textContent = content;
+                wrapper.appendChild(p);
+            }
+        }
+    }
+
+    appendChatBubble('assistant', wrapper);
+}
+
 function renderChatResponse(payload) {
     if (!payload || !payload.success) {
         appendChatText('assistant', payload?.error || 'Sorry, I could not process that.');
@@ -318,7 +396,7 @@ function renderChatResponse(payload) {
     }
 
     if (payload.type === 'llm') {
-        appendChatText('assistant', payload.message || 'No response.');
+        renderMarkdownResponse(payload.message || 'No response.');
         return;
     }
 

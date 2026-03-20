@@ -227,31 +227,32 @@
                         </div>
                     </div>
 
+                </section>
+
                     <!-- Chat Mode -->
                     <div id="chatMode" class="mode-content hidden">
-                        <div class="card glass chat-card">
+                        <div class="chat-layout">
                             <div id="chatMessages" class="chat-messages"></div>
-
-                            <div class="chat-input-row">
-                                <input type="text" id="chatInput" class="input-field"
-                                    placeholder="Ask about experiments, runs, metrics...">
-                                <button id="chatSendBtn" class="btn btn-primary">
-                                    <span class="btn-text">Send</span>
-                                    <span class="btn-icon">→</span>
-                                </button>
+                            <div class="chat-input-bar">
+                                <div class="chat-input-row">
+                                    <input type="text" id="chatInput" class="input-field"
+                                        placeholder="Ask about experiments, runs, metrics...">
+                                    <button id="chatSendBtn" class="btn btn-primary">
+                                        <span class="btn-text">Send</span>
+                                        <span class="btn-icon">→</span>
+                                    </button>
+                                </div>
+                                <div class="chat-model-row">
+                                    <label for="chatModelSelect">Model</label>
+                                    <select id="chatModelSelect" class="select-field">
+                                        <option value="gpt-5.1">gpt-5.1</option>
+                                        <option value="gpt-5-mini">gpt-5-mini</option>
+                                        <option value="gpt-4.1-mini" selected>gpt-4.1-mini</option>
+                                    </select>
+                                </div>
                             </div>
-                            <div class="chat-model-row">
-                                <label for="chatModelSelect">Model</label>
-                                <select id="chatModelSelect" class="select-field">
-                                    <option value="gpt-5.1">gpt-5.1</option>
-                                    <option value="gpt-5-mini">gpt-5-mini</option>
-                                    <option value="gpt-4.1-mini" selected>gpt-4.1-mini</option>
-                                </select>
-                            </div>
-
                         </div>
                     </div>
-                </section>
 
                 <!-- Loading State -->
                 <div id="loadingState" class="loading-state hidden">
