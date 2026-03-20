@@ -335,7 +335,7 @@ def tool_get_experiment_evaluation(params: Dict[str, Any]) -> Dict[str, Any]:
     client = MlflowClient()
 
     experiment = _resolve_experiment(client, params.get("experiment_name"), params.get("experiment_id"))
-    metrics = params.get("metrics") or ["mase"]
+    metrics = [m.lower() for m in (params.get("metrics") or ["mase"])]
     if not isinstance(metrics, list) or not metrics:
         raise ValueError("metrics must be a non-empty array")
     aggregate_mode = (params.get("aggregate_mode") or "auto").lower()
@@ -344,37 +344,34 @@ def tool_get_experiment_evaluation(params: Dict[str, Any]) -> Dict[str, Any]:
     parent_run_name = params.get("parent_run_name")
     include_parent_breakdown = bool(params.get("include_parent_breakdown", False))
 
-    parent_runs = client.search_runs(
+    all_runs = client.search_runs(
         experiment_ids=[experiment.experiment_id],
         filter_string="",
         run_view_type=mlflow.entities.ViewType.ACTIVE_ONLY,
-        max_results=3000,
+        max_results=5000,
     )
-    parent_runs = [r for r in parent_runs if _is_parent_run(r)]
+    parents = {r.info.run_id: r for r in all_runs if _is_parent_run(r)}
     if parent_run_name:
-        parent_runs = [r for r in parent_runs if _run_name(r) == parent_run_name]
+        parents = {rid: r for rid, r in parents.items() if _run_name(r) == parent_run_name}
 
     eval_rows: List[Dict[str, Any]] = []
-    for parent in parent_runs:
-        children = client.search_runs(
-            experiment_ids=[experiment.experiment_id],
-            filter_string=f"tags.mlflow.parentRunId = '{parent.info.run_id}'",
-            run_view_type=mlflow.entities.ViewType.ACTIVE_ONLY,
-            max_results=1000,
+    for run in all_runs:
+        if _is_parent_run(run):
+            continue
+        parent_id = run.data.tags.get("mlflow.parentRunId")
+        if parent_id not in parents:
+            continue
+        if _stage_from_run_name(_run_name(run)) != "eval":
+            continue
+        eval_rows.append(
+            {
+                "parent_run_id": parent_id,
+                "parent_run_name": _run_name(parents[parent_id]),
+                "eval_run_id": run.info.run_id,
+                "eval_run_name": _run_name(run),
+                "metrics": run.data.metrics,
+            }
         )
-        for child in children:
-            child_name = _run_name(child)
-            if _stage_from_run_name(child_name) != "eval":
-                continue
-            eval_rows.append(
-                {
-                    "parent_run_id": parent.info.run_id,
-                    "parent_run_name": _run_name(parent),
-                    "eval_run_id": child.info.run_id,
-                    "eval_run_name": child_name,
-                    "metrics": child.data.metrics,
-                }
-            )
 
     use_weighted = False
     if aggregate_mode == "weighted":
@@ -453,6 +450,161 @@ def tool_get_experiment_evaluation(params: Dict[str, Any]) -> Dict[str, Any]:
     }
 
 
+def tool_compare_experiments(params: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    Compare multiple experiments by MASE. Accepts either an explicit list of
+    experiment names or a prefix string to auto-discover matching experiments.
+    Returns experiments sorted by MASE (best first).
+    """
+    tracking_uri = _set_tracking_uri(params.get("tracking_uri"))
+    _log(f"[mcp] compare_experiments tracking_uri={tracking_uri} params={params}")
+    client = MlflowClient()
+
+    experiment_names: List[str] = params.get("experiment_names") or []
+    prefix: str = (params.get("prefix") or "").strip()
+
+    if not experiment_names and not prefix:
+        raise ValueError("Either experiment_names or prefix is required")
+
+    if prefix:
+        all_experiments = client.search_experiments()
+        experiment_names = [
+            exp.name for exp in all_experiments
+            if exp.lifecycle_stage == "active" and exp.name.upper().startswith(prefix.upper())
+        ]
+        if not experiment_names:
+            return {
+                "prefix": prefix,
+                "message": f"No active experiments found with prefix '{prefix}'.",
+                "results": [],
+            }
+
+    results = []
+    for exp_name in experiment_names:
+        try:
+            exp = client.get_experiment_by_name(exp_name)
+            if not exp:
+                continue
+
+            all_runs = client.search_runs(
+                experiment_ids=[exp.experiment_id],
+                filter_string="",
+                run_view_type=mlflow.entities.ViewType.ACTIVE_ONLY,
+                max_results=5000,
+            )
+            parents = {r.info.run_id: r for r in all_runs if _is_parent_run(r)}
+            use_weighted = not exp.name.upper().startswith("GEF")
+
+            eval_rows = []
+            for run in all_runs:
+                if _is_parent_run(run):
+                    continue
+                parent_id = run.data.tags.get("mlflow.parentRunId")
+                if parent_id not in parents:
+                    continue
+                if _stage_from_run_name(_run_name(run)) != "eval":
+                    continue
+                mase = run.data.metrics.get("mase")
+                if mase is None or (isinstance(mase, float) and math.isnan(mase)):
+                    continue
+                eval_rows.append({"eval_run_id": run.info.run_id, "mase": float(mase)})
+
+            if not eval_rows:
+                continue
+
+            eval_run_ids = [r["eval_run_id"] for r in eval_rows]
+            mase_values = [r["mase"] for r in eval_rows]
+
+            if use_weighted:
+                counts = _get_timeseries_counts(tracking_uri, eval_run_ids)
+                weighted_sum = sum(
+                    mase * counts.get(rid, 0)
+                    for mase, rid in zip(mase_values, eval_run_ids)
+                    if counts.get(rid, 0) > 0
+                )
+                total_ts = sum(counts.get(rid, 0) for rid in eval_run_ids)
+                mase_score = weighted_sum / total_ts if total_ts > 0 else (sum(mase_values) / len(mase_values))
+            else:
+                mase_score = sum(mase_values) / len(mase_values)
+
+            results.append({
+                "experiment": exp_name,
+                "mase": round(mase_score, 6),
+                "eval_runs_count": len(eval_rows),
+            })
+        except Exception as e:
+            _log(f"[mcp] compare_experiments error for {exp_name}: {e}")
+            continue
+
+    results.sort(key=lambda x: x["mase"])
+    return {
+        "prefix": prefix or None,
+        "experiment_names": experiment_names,
+        "results": results,
+        "best_experiment": results[0]["experiment"] if results else None,
+    }
+
+
+def tool_get_best_global_run(params: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    For a GEF_* experiment, find the best parent run (lowest MASE) and return
+    its name and MASE value. Excludes nbeats_clusters_* parent runs.
+    """
+    tracking_uri = _set_tracking_uri(params.get("tracking_uri"))
+    _log(f"[mcp] get_best_global_run tracking_uri={tracking_uri} params={params}")
+    client = MlflowClient()
+
+    experiment = _resolve_experiment(client, params.get("experiment_name"), params.get("experiment_id"))
+
+    all_runs = client.search_runs(
+        experiment_ids=[experiment.experiment_id],
+        filter_string="",
+        run_view_type=mlflow.entities.ViewType.ACTIVE_ONLY,
+        max_results=5000,
+    )
+    parents = {r.info.run_id: r for r in all_runs if _is_parent_run(r)}
+
+    # Group eval child runs by parent
+    parent_mase: Dict[str, List[float]] = {}
+    for run in all_runs:
+        if _is_parent_run(run):
+            continue
+        parent_id = run.data.tags.get("mlflow.parentRunId")
+        if parent_id not in parents:
+            continue
+        parent_name = _run_name(parents[parent_id])
+        if parent_name.startswith("nbeats_clusters_"):
+            continue
+        if _stage_from_run_name(_run_name(run)) != "eval":
+            continue
+        mase = run.data.metrics.get("mase")
+        if mase is None or (isinstance(mase, float) and math.isnan(mase)):
+            continue
+        parent_mase.setdefault(parent_name, []).append(float(mase))
+
+    if not parent_mase:
+        return {
+            "experiment": experiment.name,
+            "best_run": None,
+            "mase": None,
+            "message": "No valid eval runs with MASE found.",
+        }
+
+    # For each parent compute average MASE (unweighted — GEF is a single global model)
+    parent_avg = {name: sum(vals) / len(vals) for name, vals in parent_mase.items()}
+    best_name = min(parent_avg, key=lambda n: parent_avg[n])
+
+    return {
+        "experiment": experiment.name,
+        "best_run": best_name,
+        "mase": round(parent_avg[best_name], 6),
+        "all_runs_ranked": [
+            {"run_name": n, "mase": round(v, 6)}
+            for n, v in sorted(parent_avg.items(), key=lambda x: x[1])
+        ],
+    }
+
+
 def tool_ping(_: Dict[str, Any]) -> Dict[str, Any]:
     return {"status": "ok"}
 
@@ -463,6 +615,8 @@ TOOLS = {
     "mlflow.get_run": tool_get_run,
     "mlflow.list_pipeline_runs": tool_list_pipeline_runs,
     "mlflow.get_experiment_evaluation": tool_get_experiment_evaluation,
+    "mlflow.compare_experiments": tool_compare_experiments,
+    "mlflow.get_best_global_run": tool_get_best_global_run,
     "mlflow.ping": tool_ping,
 }
 
@@ -534,6 +688,46 @@ def _tools_schema() -> List[Dict[str, Any]]:
                     "aggregate_mode": {"type": "string", "enum": ["auto", "weighted", "unweighted"], "default": "auto"},
                     "parent_run_name": {"type": "string"},
                     "include_parent_breakdown": {"type": "boolean", "default": False},
+                },
+            },
+        },
+        {
+            "name": "mlflow.compare_experiments",
+            "description": (
+                "Compare multiple experiments by MASE and return them ranked best to worst. "
+                "Use prefix to auto-discover all matching experiments (e.g. prefix='LSTM_' finds all LSTM experiments). "
+                "Or pass an explicit list of experiment_names. "
+                "Use this for any question comparing experiments within an architecture group."
+            ),
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "tracking_uri": {"type": "string"},
+                    "experiment_names": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": "Explicit list of experiment names to compare",
+                    },
+                    "prefix": {
+                        "type": "string",
+                        "description": "Prefix to auto-discover experiments (e.g. 'LSTM_', 'MLP_', 'NBEATS_', 'TCN_')",
+                    },
+                },
+            },
+        },
+        {
+            "name": "mlflow.get_best_global_run",
+            "description": (
+                "For a GEF_* global experiment, find and return the best parent run (lowest MASE). "
+                "Automatically excludes nbeats_clusters_* runs. "
+                "Use this for any question about the best configuration of a global model."
+            ),
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "tracking_uri": {"type": "string"},
+                    "experiment_name": {"type": "string"},
+                    "experiment_id": {"type": "string"},
                 },
             },
         },

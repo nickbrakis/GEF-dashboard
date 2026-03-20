@@ -59,7 +59,7 @@ Two Flask processes, one frontend:
 - These experiments are a part of a Short Term Load Forecasting study and the main methods that are compared are global, semi global and local methods. In global methods a single model is used to be trained and evaluated with all Timeseries, semi global uses on model to be trained on a group of Timeseries and local methods use on single model for every single Timeseries
 - Every run in Mlflow Experiments represent one full ML pipeline run with stages (load, etl, train, eval). Each stage is implemented as child run that contains useful artifacts.
 - The experiments on Mlflow don't follow the same pattern.  
-- The experiments with names that follow the pattern GEF_<model>, represent the runs of hyperparameter tuning process of the global models. One of them has the actual valueable information that is the best mase value of the eval stage child run
+- The experiments with names that follow the pattern GEF_* , represent the runs of hyperparameter tuning process of the global models. One of them has the actual valueable information that is the best mase value of the eval stage child run
 - The other experiments are the local and semi global approaches. All of the runs of those experiments are valuable, they represent the run of the training and evaluation process of each model of some group of Timeseries
 
 

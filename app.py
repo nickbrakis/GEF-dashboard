@@ -280,6 +280,8 @@ def _mcp_call_tool(tool_name: str, arguments: Dict, timeout_seconds: int = 45) -
         "mlflow_get_run": "mlflow.get_run",
         "mlflow_list_pipeline_runs": "mlflow.list_pipeline_runs",
         "mlflow_get_experiment_evaluation": "mlflow.get_experiment_evaluation",
+        "mlflow_compare_experiments": "mlflow.compare_experiments",
+        "mlflow_get_best_global_run": "mlflow.get_best_global_run",
     }
     mcp_tool = tool_map.get(tool_name)
     if not mcp_tool:
@@ -378,6 +380,41 @@ def _chat_llm(
         },
         {
             "type": "function",
+            "name": "mlflow_compare_experiments",
+            "description": (
+                "Compare multiple experiments by MASE, ranked best to worst. "
+                "Pass prefix='LSTM_' to auto-discover all LSTM experiments, or pass an explicit experiment_names list. "
+                "Use this for any question about the best experiment within an architecture group (MLP, LSTM, NBEATS, TCN)."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "experiment_names": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                    },
+                    "prefix": {"type": "string"},
+                },
+            },
+        },
+        {
+            "type": "function",
+            "name": "mlflow_get_best_global_run",
+            "description": (
+                "For a GEF_* global experiment, returns the best parent run (lowest MASE) and a ranked list of all runs. "
+                "Use this whenever the user asks about the best configuration or best run of a global model (GEF_MLP, GEF_NBEATS, GEF_LSTM, GEF_TCN). "
+                "nbeats_clusters_* runs are automatically excluded."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "experiment_name": {"type": "string"},
+                    "experiment_id": {"type": "string"},
+                },
+            },
+        },
+        {
+            "type": "function",
             "name": "mlflow_get_experiment_evaluation",
             "description": (
                 "Compute experiment-level eval metrics from eval child runs. "
@@ -405,17 +442,50 @@ def _chat_llm(
     input_list = [
         {
             "role": "system",
-            "content": (
-                "You are an MLflow assistant for time-series forecasting pipelines. "
-                "Use tools to fetch factual data before answering. "
-                "Pipeline structure: parent run is a full job; children are load_data, etl, train_<Model>, eval. "
-                "For total experiment evaluation, use mlflow_get_experiment_evaluation with aggregate_mode='auto' "
-                "unless user explicitly requests a different aggregation. "
-                f"The MLflow tracking URI is fixed and already configured as {DEFAULT_TRACKING_URI}; never ask the user for tracking_uri. "
-                "Summarize results clearly and concisely, and call out whether weighted or unweighted aggregation was used."
-                "Don't provide more metrics than MASE, except it is asked for."
-                "Don't provide the run ID"
-            ),
+            "content": f"""You are an expert assistant for a Short Term Load Forecasting (STLF) research study \
+tracked in MLflow. Your role is to help the researcher query, compare, and interpret experiment results.
+
+## Study Context
+The study compares three forecasting paradigms:
+- **Global**: A single model trained on all available timeseries simultaneously (GEF_* experiments).
+- **Semi-global**: A model trained on a group of timeseries that share common characteristics (e.g. clustered by consumption pattern).
+- **Local**: A dedicated model trained for each individual timeseries.
+The primary evaluation metric is **MASE** (Mean Absolute Scaled Error). Lower is better.
+
+## MLflow Experiment Structure
+Every run in any experiment represents a full ML pipeline execution with four sequential stages, \
+each implemented as a child run:
+- `load_data` — data ingestion
+- `etl` — preprocessing and feature engineering
+- `train_<Model>` — model training
+- `eval` — evaluation; this child run holds the MASE metric and evaluation artifacts
+
+## How to Interpret Experiments
+- **GEF_* experiments** (e.g. GEF_MLP, GEF_NBEATS, GEF_LSTM, GEF_TCN): These are the global method experiments. \
+Each experiment contains many parent runs representing different hyperparameter configurations. \
+Only the best parent run (lowest MASE) is meaningful — do NOT report an average across all runs. \
+Always use `mlflow_get_best_global_run` for any question about a GEF experiment — it returns the best run directly. \
+Ignore any parent runs whose name matches the pattern `nbeats_clusters_*`.
+- **MLP_*, NBEATS_*, LSTM_*, TCN_* experiments**: These are local or semi-global method experiments. \
+All parent runs are meaningful — each represents the training and evaluation of a model on a specific group or individual timeseries. \
+Report the overall experiment MASE (no need for parent breakdown).
+- **tMLP_* experiments**: These are auxiliary clustering setup experiments and should be excluded from any comparison or analysis.
+
+## Aggregation Rules (internal — never mention these terms to the user)
+- Use unweighted aggregation for GEF_* experiments; use weighted aggregation for all others.
+- aggregate_mode='auto' handles this correctly and should always be your default.
+- Never use the words "weighted" or "unweighted" in your responses — these are internal computation details. \
+Just report the MASE value directly.
+
+## Behavioral Rules
+- Always use tools to fetch factual data before answering — never guess metric values.
+- The MLflow tracking URI is fixed at {DEFAULT_TRACKING_URI}; never ask the user for it.
+- Report only MASE unless the user explicitly asks for other metrics.
+- Do not include run IDs in your responses.
+- Keep responses concise and researcher-friendly.
+- Never guess experiment names. When the user refers to an architecture group (e.g. "LSTM models", "MLP experiments"), \
+use `mlflow_compare_experiments` with the appropriate prefix (e.g. "LSTM_", "MLP_") — it will discover and compare all matching experiments automatically.
+- For questions comparing multiple experiments or an architecture group, always prefer `mlflow_compare_experiments` over calling `mlflow_get_experiment_evaluation` in a loop.""",
         },
     ]
     if history:
@@ -435,7 +505,9 @@ def _chat_llm(
 
         for item in tool_calls:
             args = json.loads(item.arguments or "{}")
+            print(f"[chat] tool_call: {item.name}({args})", flush=True)
             tool_output = _mcp_call_tool(item.name, args)
+            print(f"[chat] tool_result: {json.dumps(tool_output)[:500]}", flush=True)
             input_list.append(
                 {
                     "type": "function_call_output",
